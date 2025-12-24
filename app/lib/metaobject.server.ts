@@ -125,14 +125,15 @@ export async function createMetaobject(admin: AdminApiContext): Promise<{ succes
     }
   `;
 
-  // Construction des fieldDefinitions au format GraphQL avec validations
+  // Construction des fieldDefinitions au format GraphQL
+  // Note: Les validations choices ne sont pas supportées dans la création initiale
+  // Les choix "%" et "€" devront être ajoutés manuellement dans l'interface Shopify
   const graphqlFieldDefinitions = fieldDefinitions.map(field => {
     const base: {
       name: string;
       key: string;
       required: boolean;
       type?: string;
-      validations?: Array<{ name: string; value: string[] }>;
     } = {
       name: field.name,
       key: field.key,
@@ -141,16 +142,8 @@ export async function createMetaobject(admin: AdminApiContext): Promise<{ succes
 
     if (field.type === "single_line_text_field") {
       base.type = "single_line_text_field";
-      
-      // Ajouter les choix si définis - format correct pour Shopify
-      if (field.choices && field.choices.length > 0) {
-        base.validations = [
-          {
-            name: "choices",
-            value: field.choices
-          }
-        ];
-      }
+      // Les validations choices ne sont pas supportées dans metaobjectDefinitionCreate
+      // Il faudra les ajouter manuellement dans l'interface Shopify ou via une mise à jour
     } else if (field.type === "number_decimal") {
       base.type = "number_decimal";
     }

@@ -11,9 +11,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   // Vérifier si on vient d'une création réussie
   const url = new URL(request.url);
   const success = url.searchParams.get("success");
-  const error = url.searchParams.get("error");
   
-  return { status, success, error };
+  return { status, success };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -29,18 +28,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Rediriger avec un paramètre de succès
       return redirect("/app?success=created");
     } else {
-      // Si après 2 secondes le métaobjet n'existe toujours pas, c'est une erreur
-      return redirect("/app?error=propagation");
+      // Si après 2 secondes le métaobjet n'existe toujours pas, retourner une erreur
+      return {
+        success: false,
+        error: "La structure a été créée mais n'a pas pu être vérifiée. Veuillez rafraîchir la page."
+      };
     }
   }
   
-  // En cas d'erreur, rediriger avec le message d'erreur
-  const errorMessage = encodeURIComponent(result.error || "Erreur inconnue lors de la création");
-  return redirect(`/app?error=${errorMessage}`);
+  // En cas d'erreur, retourner le résultat directement (pas dans l'URL)
+  return { success: false, error: result.error || "Erreur inconnue lors de la création" };
 };
 
 export default function Index() {
-  const { status, success, error } = useLoaderData<typeof loader>();
+  const { status, success } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
   const [searchParams, setSearchParams] = useSearchParams();
 
   return (
@@ -62,22 +64,13 @@ export default function Index() {
             </Banner>
           )}
           
-          {/* Message d'erreur */}
-          {error && (
+          {/* Message d'erreur depuis actionData */}
+          {actionData && !actionData.success && actionData.error && (
             <Banner
               tone="critical"
               title="Erreur lors de la création"
-              onDismiss={() => {
-                const newParams = new URLSearchParams(searchParams);
-                newParams.delete("error");
-                setSearchParams(newParams);
-              }}
             >
-              <p>
-                {error === "propagation"
-                  ? "La structure a été créée mais n'a pas pu être vérifiée. Veuillez rafraîchir la page."
-                  : decodeURIComponent(error)}
-              </p>
+              <p>{actionData.error}</p>
             </Banner>
           )}
           
