@@ -92,36 +92,31 @@ export async function createMetaobject(admin: AdminApiContext): Promise<{ succes
 
   // Construction des fieldDefinitions au format GraphQL
   const graphqlFieldDefinitions = fieldDefinitions.map(field => {
-    const base = {
+    const base: any = {
       name: field.name,
       key: field.key,
       required: field.required
     };
 
     if (field.type === "single_line_text_field") {
-      return {
-        ...base,
-        type: { name: "single_line_text_field" },
-        ...(field.unique && { validations: [{ name: "unique" }] })
-      };
+      base.type = "single_line_text_field";
+      if (field.unique) {
+        base.validations = [{ name: "unique" }];
+      }
     } else if (field.type === "number_decimal") {
-      return {
-        ...base,
-        type: { name: "number_decimal" }
-      };
+      base.type = "number_decimal";
     } else if (field.type === "list.single_line_text_field") {
-      return {
-        ...base,
-        type: {
-          name: "list.single_line_text_field",
-          list: {
-            singleLineTextField: {
-              choices: field.choices || []
-            }
-          }
-        }
-      };
+      // Pour les listes de choix, format simplifié
+      base.type = "list.single_line_text_field";
+      // Les choix sont définis différemment dans l'API
+      if (field.choices && field.choices.length > 0) {
+        base.validations = [{
+          name: "choices",
+          value: field.choices.join(",")
+        }];
+      }
     }
+    
     return base;
   });
 
@@ -132,7 +127,7 @@ export async function createMetaobject(admin: AdminApiContext): Promise<{ succes
       fieldDefinitions: graphqlFieldDefinitions,
       capabilities: {
         publishable: {
-          status: "ACTIVE"
+          enabled: true
         }
       }
     }
