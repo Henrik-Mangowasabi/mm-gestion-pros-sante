@@ -2,12 +2,12 @@ import { Page, Layout, Card, Text } from "@shopify/polaris";
 
 export default function Index() {
   return (
-    <Page title="Test de connexion">
+    <Page title="App créé">
       <Layout>
         <Layout.Section>
           <Card>
             <Text as="p" variant="bodyMd">
-              Bjr
+              App créé
             </Text>
           </Card>
         </Layout.Section>
