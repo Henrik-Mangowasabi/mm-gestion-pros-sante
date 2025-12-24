@@ -1,254 +1,157 @@
-import { useEffect } from "react";
-import type {
-  ActionFunctionArgs,
-  HeadersFunction,
-  LoaderFunctionArgs,
-} from "react-router";
-import { useFetcher } from "react-router";
-import { useAppBridge } from "@shopify/app-bridge-react";
+import { useState, useCallback } from "react";
+import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import {
+  Page, Layout, Card, Tabs, Button, Text, BlockStack, ResourceList, ResourceItem, Badge, Banner
+} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
-import { boundary } from "@shopify/shopify-app-react-router/server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { admin } = await authenticate.admin(request);
 
-  return null;
+  // 1. Vérifier si le Metaobject "mm_pro_de_sante" existe
+  const checkMO = await admin.graphql(`
+    #graphql
+    query {
+      metaobjectDefinitionByType(type: "mm_pro_de_sante") {
+        id
+      }
+    }
+  `);
+  
+  const moData = await checkMO.json();
+  const moExists = moData.data.metaobjectDefinitionByType !== null;
+
+  // 2. Récupérer les données existantes
+  const response = await admin.graphql(`
+    #graphql
+    query {
+      metaobjects(type: "mm_pro_de_sante", first: 20) {
+        nodes {
+          id
+          displayName
+          fields { key value }
+        }
+      }
+      discountNodes(first: 10) {
+        nodes {
+          id
+          discount { ... on DiscountCodeBasic { title status } }
+        }
+      }
+      customers(first: 20, query: "tag:PRO") {
+        nodes { id displayName email }
+      }
+    }
+  `);
+
+  const data = await response.json();
+
+  return json({
+    moExists,
+    pros: data.data.metaobjects?.nodes || [],
+    discounts: data.data.discountNodes?.nodes || [],
+    customers: data.data.customers?.nodes || [],
+  });
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
+  const formData = await request.formData();
+  const intent = formData.get("intent");
 
-  const product = responseJson.data!.productCreate!.product!;
-  const variantId = product.variants.edges[0]!.node!.id!;
-
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
+  if (intent === "create_structure") {
+    const createRes = await admin.graphql(`
+      #graphql
+      mutation CreateMetaobjectDefinition($definition: MetaobjectDefinitionCreateInput!) {
+        metaobjectDefinitionCreate(definition: $definition) {
+          metaobjectDefinition { name type }
+          userErrors { field message }
         }
       }
-    }`,
-    {
+    `, {
       variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
+        definition: {
+          name: "MM Pro de santé",
+          type: "mm_pro_de_sante",
+          access: { storefront: "PUBLIC_READ" },
+          fieldDefinitions: [
+            { name: "Identification", key: "identification", type: "single_line_text_field" },
+            { name: "Name", key: "name", type: "single_line_text_field" },
+            { name: "Email", key: "email", type: "single_line_text_field" },
+            { name: "Code Name", key: "code", type: "single_line_text_field" },
+            { name: "Montant", key: "montant", type: "number_decimal" },
+            { 
+              name: "Type", 
+              key: "type", 
+              type: "single_line_text_field",
+              validations: [{ name: "choices", value: "[\\"%\\", \\"€\\"]" }]
+            }
+          ]
+        }
+      }
+    });
 
-  const variantResponseJson = await variantResponse.json();
-
-  return {
-    product: responseJson!.data!.productCreate!.product,
-    variant:
-      variantResponseJson!.data!.productVariantsBulkUpdate!.productVariants,
-  };
+    const result = await createRes.json();
+    return json({ result });
+  }
+  return null;
 };
 
 export default function Index() {
-  const fetcher = useFetcher<typeof action>();
+  const { moExists, pros, discounts, customers } = useLoaderData<typeof loader>();
+  const actionData = useActionData<typeof action>();
+  const submit = useSubmit();
+  const navigation = useNavigation();
+  const [selectedTab, setSelectedTab] = useState(0);
 
-  const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
+  const isLoading = navigation.state === "submitting";
 
-  useEffect(() => {
-    if (fetcher.data?.product?.id) {
-      shopify.toast.show("Product created");
-    }
-  }, [fetcher.data?.product?.id, shopify]);
-
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
+  const tabs = [
+    { id: 'pros', content: 'Pros (Metaobjects)' },
+    { id: 'codes', content: 'Codes Promo' },
+    { id: 'segments', content: 'Segments (Tag PRO)' },
+  ];
 
   return (
-    <s-page heading="Shopify app template">
-      <s-button slot="primary-action" onClick={generateProduct}>
-        Generate a product
-      </s-button>
-
-      <s-section heading="Gestion des Professionnels de Santé">
-        <s-paragraph>
-          This embedded app template uses{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/tools/app-bridge"
-            target="_blank"
-          >
-            App Bridge
-          </s-link>{" "}
-          interface examples like an{" "}
-          <s-link href="/app/additional">additional page in the app nav</s-link>
-          , as well as an{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            Admin GraphQL
-          </s-link>{" "}
-          mutation demo, to provide a starting point for app development.
-        </s-paragraph>
-      </s-section>
-      <s-section heading="Get started with products">
-        <s-paragraph>
-          Generate a product with GraphQL and get the JSON output for that
-          product. Learn more about the{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-            target="_blank"
-          >
-            productCreate
-          </s-link>{" "}
-          mutation in our API references.
-        </s-paragraph>
-        <s-stack direction="inline" gap="base">
-          <s-button
-            onClick={generateProduct}
-            {...(isLoading ? { loading: true } : {})}
-          >
-            Generate a product
-          </s-button>
-          {fetcher.data?.product && (
-            <s-button
-              onClick={() => {
-                shopify.intents.invoke?.("edit:shopify/Product", {
-                  value: fetcher.data?.product?.id,
-                });
-              }}
-              target="_blank"
-              variant="tertiary"
-            >
-              Edit product
-            </s-button>
+    <Page title="Gestion Pros Jolly Mama">
+      <Layout>
+        <Layout.Section>
+          {!moExists && (
+            <Banner title="Structure manquante" tone="warning" onDismiss={() => {}}>
+              <BlockStack gap="200">
+                <Text as="p">Le Metaobject <b>mm_pro_de_sante</b> n'est pas détecté.</Text>
+                <Button 
+                  onClick={() => submit({ intent: "create_structure" }, { method: "post" })}
+                  loading={isLoading}
+                  variant="primary"
+                >
+                  Créer la structure automatiquement
+                </Button>
+              </BlockStack>
+            </Banner>
           )}
-        </s-stack>
-        {fetcher.data?.product && (
-          <s-section heading="productCreate mutation">
-            <s-stack direction="block" gap="base">
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.product, null, 2)}</code>
-                </pre>
-              </s-box>
 
-              <s-heading>productVariantsBulkUpdate mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.variant, null, 2)}</code>
-                </pre>
-              </s-box>
-            </s-stack>
-          </s-section>
-        )}
-      </s-section>
-
-      <s-section slot="aside" heading="App template specs">
-        <s-paragraph>
-          <s-text>Framework: </s-text>
-          <s-link href="https://reactrouter.com/" target="_blank">
-            React Router
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Interface: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/app-home/using-polaris-components"
-            target="_blank"
-          >
-            Polaris web components
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>API: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            GraphQL
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Database: </s-text>
-          <s-link href="https://www.prisma.io/" target="_blank">
-            Prisma
-          </s-link>
-        </s-paragraph>
-      </s-section>
-
-      <s-section slot="aside" heading="Next steps">
-        <s-unordered-list>
-          <s-list-item>
-            Build an{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/getting-started/build-app-example"
-              target="_blank"
-            >
-              example app
-            </s-link>
-          </s-list-item>
-          <s-list-item>
-            Explore Shopify&apos;s API with{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-              target="_blank"
-            >
-              GraphiQL
-            </s-link>
-          </s-list-item>
-        </s-unordered-list>
-      </s-section>
-    </s-page>
+          <Tabs tabs={tabs} selected={selectedTab} onSelect={setSelectedTab}>
+            <Card padding="500">
+              {selectedTab === 0 && (
+                <ResourceList
+                  resourceName={{ singular: 'pro', plural: 'pros' }}
+                  items={pros}
+                  renderItem={(item: any) => (
+                    <ResourceItem id={item.id} onClick={() => {}}>
+                      <Text as="h3" variant="bodyMd" fontWeight="bold">{item.displayName}</Text>
+                      <Text as="p" tone="subdued">Code: {item.fields.find((f:any) => f.key === 'code')?.value}</Text>
+                    </ResourceItem>
+                  )}
+                />
+              )}
+              {/* Vues Codes Promo et Clients similaires... */}
+            </Card>
+          </Tabs>
+        </Layout.Section>
+      </Layout>
+    </Page>
   );
 }
-
-export const headers: HeadersFunction = (headersArgs) => {
-  return boundary.headers(headersArgs);
-};
