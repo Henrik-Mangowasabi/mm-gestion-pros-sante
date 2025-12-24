@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useLoaderData, useSubmit, useNavigation, useActionData } from "@remix-run/react";
+import { useLoaderData, useSubmit, useNavigation } from "@remix-run/react";
 import {
   Page, Layout, Card, Tabs, Button, Text, BlockStack, ResourceList, ResourceItem, Badge, Banner, Box
 } from "@shopify/polaris";
@@ -10,59 +10,59 @@ import { authenticate } from "../shopify.server";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
 
-  // 1. Vérifier si le Metaobject "mm_pro_de_sante" existe
-  const checkMO = await admin.graphql(`
-    #graphql
-    query {
-      metaobjectDefinitionByType(type: "mm_pro_de_sante") {
-        id
-      }
-    }
-  `);
-  
-  const moData = await (checkMO as any).json();
-  const moExists = moData.data.metaobjectDefinitionByType !== null;
-
-  // 2. Récupérer les données pour les 3 onglets
-  const response = await admin.graphql(`
-    #graphql
-    query {
-      metaobjects(type: "mm_pro_de_sante", first: 20) {
-        nodes {
+  try {
+    // 1. Vérification simplifiée du Metaobject
+    const checkMO = await admin.graphql(`
+      query {
+        metaobjectDefinitionByType(type: "mm_pro_de_sante") {
           id
-          displayName
-          fields { key value }
         }
       }
-      discountNodes(first: 20) {
-        nodes {
-          id
-          discount { ... on DiscountCodeBasic { title status } }
+    `);
+    const moData: any = await checkMO.json();
+    const moExists = !!moData.data?.metaobjectDefinitionByType;
+
+    // 2. Récupération des données (Pros, Codes, Clients)
+    const response = await admin.graphql(`
+      query {
+        metaobjects(type: "mm_pro_de_sante", first: 10) {
+          nodes {
+            id
+            displayName
+            fields { key value }
+          }
+        }
+        discountNodes(first: 10) {
+          nodes {
+            id
+            discount { ... on DiscountCodeBasic { title status } }
+          }
+        }
+        customers(first: 10, query: "tag:PRO") {
+          nodes { id displayName email }
         }
       }
-      customers(first: 20, query: "tag:PRO") {
-        nodes { id displayName email }
-      }
-    }
-  `);
+    `);
+    const data: any = await response.json();
 
-  const data = await (response as any).json();
-
-  return json({
-    moExists,
-    pros: data.data?.metaobjects?.nodes || [],
-    discounts: data.data?.discountNodes?.nodes || [],
-    customers: data.data?.customers?.nodes || [],
-  });
+    return json({
+      moExists,
+      pros: data.data?.metaobjects?.nodes || [],
+      discounts: data.data?.discountNodes?.nodes || [],
+      customers: data.data?.customers?.nodes || [],
+    });
+  } catch (error) {
+    // Si la requête échoue (ex: pas encore de droits), on renvoie des tableaux vides
+    return json({ moExists: false, pros: [], discounts: [], customers: [] });
+  }
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
-  
+
   if (formData.get("intent") === "create_structure") {
-    const createRes = await admin.graphql(`
-      #graphql
+    await admin.graphql(`
       mutation CreateDef($definition: MetaobjectDefinitionCreateInput!) {
         metaobjectDefinitionCreate(definition: $definition) {
           metaobjectDefinition { type }
@@ -91,9 +91,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         }
       }
     });
-    return json({ result: await (createRes as any).json() });
   }
-  return null;
+  return json({ ok: true });
 };
 
 export default function Index() {
@@ -109,13 +108,13 @@ export default function Index() {
   ];
 
   return (
-    <Page title="Gestion Pros de Santé">
+    <Page title="Gestion Pros Jolly Mama">
       <Layout>
         <Layout.Section>
           {!moExists && (
             <Banner title="Structure manquante" tone="warning">
               <BlockStack gap="200">
-                <Text as="p">Le Metaobject <b>mm_pro_de_sante</b> n'est pas encore créé.</Text>
+                <Text as="p">Le Metaobject <b>mm_pro_de_sante</b> doit être configuré.</Text>
                 <Button 
                   onClick={() => submit({ intent: "create_structure" }, { method: "post" })}
                   loading={navigation.state === "submitting"}
@@ -137,7 +136,9 @@ export default function Index() {
                     renderItem={(item: any) => (
                       <ResourceItem id={item.id} onClick={() => {}}>
                         <Text as="h3" variant="bodyMd" fontWeight="bold">{item.displayName}</Text>
-                        <Text as="p" tone="subdued">Code: {item.fields.find((f:any) => f.key === 'code')?.value || 'N/A'}</Text>
+                        <Text as="p" tone="subdued">
+                          Code: {item.fields?.find((f:any) => f.key === 'code')?.value || 'N/A'}
+                        </Text>
                       </ResourceItem>
                     )}
                   />
@@ -149,12 +150,10 @@ export default function Index() {
                     items={discounts}
                     renderItem={(item: any) => (
                       <ResourceItem id={item.id} onClick={() => {}}>
-                        <BlockStack gap="100">
-                          <Text as="h3" variant="bodyMd" fontWeight="bold">{item.discount?.title || "Sans titre"}</Text>
-                          <Badge tone={item.discount?.status === 'ACTIVE' ? 'success' : 'attention'}>
-                            {item.discount?.status || 'Inconnu'}
-                          </Badge>
-                        </BlockStack>
+                        <Text as="h3" variant="bodyMd" fontWeight="bold">{item.discount?.title || "Promo"}</Text>
+                        <Badge tone={item.discount?.status === 'ACTIVE' ? 'success' : 'attention'}>
+                          {item.discount?.status || 'Inactif'}
+                        </Badge>
                       </ResourceItem>
                     )}
                   />
