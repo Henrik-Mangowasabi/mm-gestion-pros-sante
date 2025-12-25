@@ -1,6 +1,4 @@
 import type { LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
-import { Page, Layout, Card, Text } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -10,18 +8,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function Index() {
   return (
-    <Page title="MM Gestion Pros Santé">
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <div style={{ padding: "2rem", textAlign: "center" }}>
-              <Text as="h1" variant="headingXl">
-                App web simple
-              </Text>
-            </div>
-          </Card>
-        </Layout.Section>
-      </Layout>
-    </Page>
+    <div style={{
+      width: "100%",
+      height: "100vh",
+      display: "flex",
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: "#f5f5f5",
+      fontFamily: "Arial, sans-serif"
+    }}>
+      <h1 style={{ color: "#333", margin: 0 }}>app page web</h1>
+    </div>
   );
 }
