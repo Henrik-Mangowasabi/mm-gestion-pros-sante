@@ -547,41 +547,35 @@ export async function getMetaobjectEntries(admin: AdminApiContext): Promise<{
       console.log("Champs GraphQL reçus pour l'entrée:", node.id);
       console.log("Tous les champs:", JSON.stringify(node.fields, null, 2));
 
+      // Parser tous les champs, même s'ils sont vides
       node.fields?.forEach(field => {
-        // Gérer les valeurs null/undefined
-        if (field.value === null || field.value === undefined || field.value === "") {
-          console.log(`Champ ${field.key} est vide ou null`);
-          return; // Ignorer les valeurs null/vides
-        }
-
-        const stringValue = String(field.value).trim();
-        if (!stringValue) {
-          return; // Ignorer les chaînes vides après trim
-        }
+        console.log(`Traitement du champ: ${field.key} = ${JSON.stringify(field.value)} (type: ${typeof field.value})`);
 
         if (field.key === "identification") {
-          entry.identification = stringValue;
-          console.log(`Identification définie: ${stringValue}`);
+          entry.identification = field.value !== null && field.value !== undefined ? String(field.value).trim() : undefined;
+          console.log(`Identification définie: ${entry.identification}`);
         } else if (field.key === "name") {
-          entry.name = stringValue;
-          console.log(`Name défini: ${stringValue}`);
+          entry.name = field.value !== null && field.value !== undefined ? String(field.value).trim() : undefined;
+          console.log(`Name défini: ${entry.name}`);
         } else if (field.key === "email") {
-          entry.email = stringValue;
-          console.log(`Email défini: ${stringValue}`);
+          entry.email = field.value !== null && field.value !== undefined ? String(field.value).trim() : undefined;
+          console.log(`Email défini: ${entry.email}`);
         } else if (field.key === "code") {
-          entry.code = stringValue;
-          console.log(`Code défini: ${stringValue}`);
+          entry.code = field.value !== null && field.value !== undefined ? String(field.value).trim() : undefined;
+          console.log(`Code défini: ${entry.code}`);
         } else if (field.key === "montant") {
-          const numValue = Number(field.value);
-          if (!isNaN(numValue)) {
-            entry.montant = numValue;
-            console.log(`Montant défini: ${numValue}`);
+          if (field.value !== null && field.value !== undefined) {
+            const numValue = Number(field.value);
+            if (!isNaN(numValue)) {
+              entry.montant = numValue;
+              console.log(`Montant défini: ${entry.montant}`);
+            }
           }
         } else if (field.key === "type") {
-          entry.type = stringValue;
-          console.log(`Type défini: ${stringValue}`);
+          entry.type = field.value !== null && field.value !== undefined ? String(field.value).trim() : undefined;
+          console.log(`Type défini: ${entry.type}`);
         } else {
-          console.log(`Champ inconnu ignoré: ${field.key} = ${field.value}`);
+          console.log(`Champ inconnu: ${field.key} = ${field.value}`);
         }
       });
 
