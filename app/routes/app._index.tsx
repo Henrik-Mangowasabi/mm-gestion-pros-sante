@@ -213,10 +213,13 @@ function EntryRow({ entry, index }: {
         {entry.id.split("/").pop()?.slice(-8)}
       </td>
       {isEditing ? (
-        <>
+        <Form method="post">
+          <input type="hidden" name="action" value="update_entry" />
+          <input type="hidden" name="id" value={entry.id} />
           <td style={{ padding: "12px" }}>
             <input
               type="text"
+              name="identification"
               value={formData.identification}
               onChange={(e) => setFormData({ ...formData, identification: e.target.value })}
               placeholder="Identification"
@@ -226,45 +229,55 @@ function EntryRow({ entry, index }: {
           <td style={{ padding: "12px" }}>
             <input
               type="text"
+              name="name"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               placeholder="Name"
               style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
+              required
             />
           </td>
           <td style={{ padding: "12px" }}>
             <input
               type="email"
+              name="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               placeholder="Email"
               style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
+              required
             />
           </td>
           <td style={{ padding: "12px" }}>
             <input
               type="text"
+              name="code"
               value={formData.code}
               onChange={(e) => setFormData({ ...formData, code: e.target.value })}
               placeholder="Code"
               style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
+              required
             />
           </td>
           <td style={{ padding: "12px" }}>
             <input
               type="number"
               step="0.01"
+              name="montant"
               value={formData.montant}
               onChange={(e) => setFormData({ ...formData, montant: e.target.value })}
               placeholder="Montant"
               style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
+              required
             />
           </td>
           <td style={{ padding: "12px" }}>
             <select
+              name="type"
               value={formData.type}
               onChange={(e) => setFormData({ ...formData, type: e.target.value })}
               style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
+              required
             >
               <option value="">Sélectionner un type</option>
               <option value="%">%</option>
@@ -273,22 +286,12 @@ function EntryRow({ entry, index }: {
           </td>
           <td style={{ padding: "12px" }}>
             <div style={{ display: "flex", gap: "4px" }}>
-              <Form method="post">
-                <input type="hidden" name="action" value="update_entry" />
-                <input type="hidden" name="id" value={entry.id} />
-                <input type="hidden" name="identification" value={formData.identification} />
-                <input type="hidden" name="name" value={formData.name} />
-                <input type="hidden" name="email" value={formData.email} />
-                <input type="hidden" name="code" value={formData.code} />
-                <input type="hidden" name="montant" value={formData.montant} />
-                <input type="hidden" name="type" value={formData.type} />
-                <button
-                  type="submit"
-                  style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.9em", fontWeight: "500" }}
-                >
-                  ✓ Enregistrer
-                </button>
-              </Form>
+              <button
+                type="submit"
+                style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.9em", fontWeight: "500" }}
+              >
+                ✓ Enregistrer
+              </button>
               <button
                 type="button"
                 onClick={handleCancel}
@@ -298,7 +301,7 @@ function EntryRow({ entry, index }: {
               </button>
             </div>
           </td>
-        </>
+        </Form>
       ) : (
         <>
           <td style={{ padding: "12px" }}>
