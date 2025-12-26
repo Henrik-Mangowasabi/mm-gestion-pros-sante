@@ -469,26 +469,26 @@ export default function Index() {
             </h2>
             
             <div style={{ overflowX: "auto" }}>
-              <table style={{
-                width: "100%",
-                borderCollapse: "collapse"
-              }}>
-                <thead>
-                  <tr style={{ backgroundColor: "#f8f8f8" }}>
-                    <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>ID</th>
-                    <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Identification</th>
-                    <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Name</th>
-                    <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Email</th>
-                    <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Code</th>
-                    <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Montant</th>
-                    <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Type</th>
-                    <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {/* Ligne pour ajouter une nouvelle entrée */}
-                  <Form method="post">
-                    <input type="hidden" name="action" value="create_entry" />
+              <Form method="post">
+                <input type="hidden" name="action" value="create_entry" />
+                <table style={{
+                  width: "100%",
+                  borderCollapse: "collapse"
+                }}>
+                  <thead>
+                    <tr style={{ backgroundColor: "#f8f8f8" }}>
+                      <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>ID</th>
+                      <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Identification</th>
+                      <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Name</th>
+                      <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Email</th>
+                      <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Code</th>
+                      <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Montant</th>
+                      <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Type</th>
+                      <th style={{ padding: "12px", textAlign: "left", borderBottom: "2px solid #ddd" }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {/* Ligne pour ajouter une nouvelle entrée */}
                     <tr style={{ backgroundColor: "#f0f8ff", borderBottom: "2px solid #ddd" }}>
                       <td style={{ padding: "8px", color: "#666", fontSize: "0.9em" }}>Nouveau</td>
                       <td style={{ padding: "8px" }}>
@@ -564,7 +564,6 @@ export default function Index() {
                         </button>
                       </td>
                     </tr>
-                  </Form>
                   
                   {/* Lignes existantes */}
                   {entries.map((entry, index) => (
@@ -572,6 +571,7 @@ export default function Index() {
                   ))}
                 </tbody>
               </table>
+              </Form>
             </div>
           </div>
         </div>
