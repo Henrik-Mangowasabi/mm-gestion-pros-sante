@@ -172,6 +172,18 @@ function EntryRow({ entry, index }: {
     type: entry.type || "",
   });
 
+  // Mettre à jour formData quand entry change
+  React.useEffect(() => {
+    setFormData({
+      identification: entry.identification || "",
+      name: entry.name || "",
+      email: entry.email || "",
+      code: entry.code || "",
+      montant: entry.montant !== undefined ? String(entry.montant) : "",
+      type: entry.type || "",
+    });
+  }, [entry]);
+
   const handleEdit = () => {
     setIsEditing(true);
   };
@@ -198,93 +210,91 @@ function EntryRow({ entry, index }: {
         {entry.id.split("/").pop()?.slice(-8)}
       </td>
       {isEditing ? (
-        <>
-          <Form method="post">
-            <input type="hidden" name="action" value="update_entry" />
-            <input type="hidden" name="id" value={entry.id} />
-            <td style={{ padding: "12px" }}>
-              <input
-                type="text"
-                name="identification"
-                value={formData.identification}
-                onChange={(e) => setFormData({ ...formData, identification: e.target.value })}
-                style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
-                required
-              />
-            </td>
-            <td style={{ padding: "12px" }}>
-              <input
-                type="text"
-                name="name"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
-                required
-              />
-            </td>
-            <td style={{ padding: "12px" }}>
-              <input
-                type="email"
-                name="email"
-                value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
-                required
-              />
-            </td>
-            <td style={{ padding: "12px" }}>
-              <input
-                type="text"
-                name="code"
-                value={formData.code}
-                onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-                style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
-                required
-              />
-            </td>
-            <td style={{ padding: "12px" }}>
-              <input
-                type="number"
-                step="0.01"
-                name="montant"
-                value={formData.montant}
-                onChange={(e) => setFormData({ ...formData, montant: e.target.value })}
-                style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
-                required
-              />
-            </td>
-            <td style={{ padding: "12px" }}>
-              <select
-                name="type"
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-                style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
-                required
+        <Form method="post">
+          <input type="hidden" name="action" value="update_entry" />
+          <input type="hidden" name="id" value={entry.id} />
+          <td style={{ padding: "12px" }}>
+            <input
+              type="text"
+              name="identification"
+              value={formData.identification}
+              onChange={(e) => setFormData({ ...formData, identification: e.target.value })}
+              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              required
+            />
+          </td>
+          <td style={{ padding: "12px" }}>
+            <input
+              type="text"
+              name="name"
+              value={formData.name}
+              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              required
+            />
+          </td>
+          <td style={{ padding: "12px" }}>
+            <input
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              required
+            />
+          </td>
+          <td style={{ padding: "12px" }}>
+            <input
+              type="text"
+              name="code"
+              value={formData.code}
+              onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              required
+            />
+          </td>
+          <td style={{ padding: "12px" }}>
+            <input
+              type="number"
+              step="0.01"
+              name="montant"
+              value={formData.montant}
+              onChange={(e) => setFormData({ ...formData, montant: e.target.value })}
+              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              required
+            />
+          </td>
+          <td style={{ padding: "12px" }}>
+            <select
+              name="type"
+              value={formData.type}
+              onChange={(e) => setFormData({ ...formData, type: e.target.value })}
+              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              required
+            >
+              <option value="">Type</option>
+              <option value="%">%</option>
+              <option value="€">€</option>
+            </select>
+          </td>
+          <td style={{ padding: "12px" }}>
+            <div style={{ display: "flex", gap: "4px" }}>
+              <button
+                type="submit"
+                style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.9em", fontWeight: "500" }}
               >
-                <option value="">Type</option>
-                <option value="%">%</option>
-                <option value="€">€</option>
-              </select>
-            </td>
-            <td style={{ padding: "12px" }}>
-              <div style={{ display: "flex", gap: "4px" }}>
-                <button
-                  type="submit"
-                  style={{ padding: "4px 8px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                >
-                  ✓
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  style={{ padding: "4px 8px", backgroundColor: "#ccc", color: "white", border: "none", borderRadius: "4px", cursor: "pointer" }}
-                >
-                  ✕
-                </button>
-              </div>
-            </td>
-          </Form>
-        </>
+                ✓ Enregistrer
+              </button>
+              <button
+                type="button"
+                onClick={handleCancel}
+                style={{ padding: "6px 12px", backgroundColor: "#ccc", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.9em" }}
+              >
+                ✕ Annuler
+              </button>
+            </div>
+          </td>
+        </Form>
       ) : (
         <>
           <td style={{ padding: "12px" }}>{entry.identification || "-"}</td>
