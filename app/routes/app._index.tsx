@@ -209,7 +209,7 @@ function EntryRow({ entry, index }: {
         {entry.id.split("/").pop()?.slice(-8)}
       </td>
       {isEditing ? (
-        <Form method="post">
+        <Form method="post" id={`edit-form-${entry.id}`}>
           <input type="hidden" name="action" value="update_entry" />
           <input type="hidden" name="id" value={entry.id} />
           <td style={{ padding: "12px" }}>
@@ -218,8 +218,9 @@ function EntryRow({ entry, index }: {
               name="identification"
               value={formData.identification}
               onChange={(e) => setFormData({ ...formData, identification: e.target.value })}
-              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
-              required
+              placeholder="Identification"
+              form={`edit-form-${entry.id}`}
+              style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
             />
           </td>
           <td style={{ padding: "12px" }}>
@@ -228,7 +229,9 @@ function EntryRow({ entry, index }: {
               name="name"
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              placeholder="Name"
+              form={`edit-form-${entry.id}`}
+              style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
               required
             />
           </td>
@@ -238,7 +241,9 @@ function EntryRow({ entry, index }: {
               name="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              placeholder="Email"
+              form={`edit-form-${entry.id}`}
+              style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
               required
             />
           </td>
@@ -248,7 +253,9 @@ function EntryRow({ entry, index }: {
               name="code"
               value={formData.code}
               onChange={(e) => setFormData({ ...formData, code: e.target.value })}
-              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              placeholder="Code"
+              form={`edit-form-${entry.id}`}
+              style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
               required
             />
           </td>
@@ -259,7 +266,9 @@ function EntryRow({ entry, index }: {
               name="montant"
               value={formData.montant}
               onChange={(e) => setFormData({ ...formData, montant: e.target.value })}
-              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              placeholder="Montant"
+              form={`edit-form-${entry.id}`}
+              style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
               required
             />
           </td>
@@ -268,10 +277,11 @@ function EntryRow({ entry, index }: {
               name="type"
               value={formData.type}
               onChange={(e) => setFormData({ ...formData, type: e.target.value })}
-              style={{ width: "100%", padding: "6px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em" }}
+              form={`edit-form-${entry.id}`}
+              style={{ width: "100%", padding: "8px", border: "2px solid #008060", borderRadius: "4px", fontSize: "0.95em", backgroundColor: "#fff" }}
               required
             >
-              <option value="">Type</option>
+              <option value="">Sélectionner un type</option>
               <option value="%">%</option>
               <option value="€">€</option>
             </select>
@@ -280,6 +290,7 @@ function EntryRow({ entry, index }: {
             <div style={{ display: "flex", gap: "4px" }}>
               <button
                 type="submit"
+                form={`edit-form-${entry.id}`}
                 style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.9em", fontWeight: "500" }}
               >
                 ✓ Enregistrer
@@ -449,84 +460,73 @@ export default function Index() {
                 </thead>
                 <tbody>
                   {/* Ligne pour ajouter une nouvelle entrée */}
-                  <Form method="post">
-                    <input type="hidden" name="action" value="create_entry" />
-                    <tr style={{ backgroundColor: "#f0f8ff", borderBottom: "2px solid #ddd" }}>
-                      <td style={{ padding: "8px", color: "#666", fontSize: "0.9em" }}>Nouveau</td>
-                      <td style={{ padding: "8px" }}>
+                  <tr style={{ backgroundColor: "#f0f8ff", borderBottom: "2px solid #ddd" }}>
+                    <td style={{ padding: "8px", color: "#666", fontSize: "0.9em" }}>Nouveau</td>
+                    <td colSpan={7} style={{ padding: "8px" }}>
+                      <Form method="post" style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                        <input type="hidden" name="action" value="create_entry" />
                         <input
                           type="text"
                           name="identification"
                           placeholder="ID (auto si vide)"
-                          style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
+                          style={{ flex: "1", padding: "6px", border: "1px solid #ddd", borderRadius: "4px" }}
                         />
-                      </td>
-                      <td style={{ padding: "8px" }}>
                         <input
                           type="text"
                           name="name"
-                          placeholder="Name"
-                          style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
+                          placeholder="Name *"
+                          style={{ flex: "1", padding: "6px", border: "1px solid #ddd", borderRadius: "4px" }}
                           required
                         />
-                      </td>
-                      <td style={{ padding: "8px" }}>
                         <input
                           type="email"
                           name="email"
-                          placeholder="Email"
-                          style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
+                          placeholder="Email *"
+                          style={{ flex: "1", padding: "6px", border: "1px solid #ddd", borderRadius: "4px" }}
                           required
                         />
-                      </td>
-                      <td style={{ padding: "8px" }}>
                         <input
                           type="text"
                           name="code"
-                          placeholder="Code"
-                          style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
+                          placeholder="Code *"
+                          style={{ flex: "1", padding: "6px", border: "1px solid #ddd", borderRadius: "4px" }}
                           required
                         />
-                      </td>
-                      <td style={{ padding: "8px" }}>
                         <input
                           type="number"
                           step="0.01"
                           name="montant"
-                          placeholder="Montant"
-                          style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
+                          placeholder="Montant *"
+                          style={{ flex: "1", padding: "6px", border: "1px solid #ddd", borderRadius: "4px" }}
                           required
                         />
-                      </td>
-                      <td style={{ padding: "8px" }}>
                         <select
                           name="type"
-                          style={{ width: "100%", padding: "4px", border: "1px solid #ddd", borderRadius: "4px" }}
+                          style={{ flex: "1", padding: "6px", border: "1px solid #ddd", borderRadius: "4px" }}
                           required
                         >
-                          <option value="">Type</option>
+                          <option value="">Type *</option>
                           <option value="%">%</option>
                           <option value="€">€</option>
                         </select>
-                      </td>
-                      <td style={{ padding: "8px" }}>
                         <button
                           type="submit"
                           style={{
-                            padding: "6px 12px",
+                            padding: "6px 16px",
                             backgroundColor: "#008060",
                             color: "white",
                             border: "none",
                             borderRadius: "4px",
                             cursor: "pointer",
-                            fontSize: "0.9em"
+                            fontSize: "0.9em",
+                            fontWeight: "500"
                           }}
                         >
-                          ✓
+                          ✓ Ajouter
                         </button>
-                      </td>
-                    </tr>
-                  </Form>
+                      </Form>
+                    </td>
+                  </tr>
                   
                   {/* Lignes existantes */}
                   {entries.map((entry, index) => (
