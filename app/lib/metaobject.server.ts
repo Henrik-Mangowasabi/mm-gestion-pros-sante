@@ -187,7 +187,7 @@ export async function createMetaobject(admin: AdminApiContext): Promise<{ succes
       return { success: false, error: JSON.stringify(data.errors) };
     }
     
-    if (data.data?.metaobjectDefinitionCreate?.userErrors?.length > 0) {
+    if (data.data?.metaobjectDefinitionCreate?.userErrors && data.data.metaobjectDefinitionCreate.userErrors.length > 0) {
       const errors = data.data.metaobjectDefinitionCreate.userErrors;
       return { 
         success: false, 
@@ -238,6 +238,26 @@ export async function createMetaobjectEntry(
     type: string;
   }
 ): Promise<{ success: boolean; error?: string }> {
+  // Validation des champs requis
+  if (!fields.identification || fields.identification.trim() === "") {
+    return { success: false, error: "Le champ Identification est requis" };
+  }
+  if (!fields.name || fields.name.trim() === "") {
+    return { success: false, error: "Le champ Name est requis" };
+  }
+  if (!fields.email || fields.email.trim() === "") {
+    return { success: false, error: "Le champ Email est requis" };
+  }
+  if (!fields.code || fields.code.trim() === "") {
+    return { success: false, error: "Le champ Code est requis" };
+  }
+  if (fields.montant === undefined || isNaN(fields.montant)) {
+    return { success: false, error: "Le champ Montant est requis et doit être un nombre" };
+  }
+  if (!fields.type || fields.type.trim() === "") {
+    return { success: false, error: "Le champ Type est requis" };
+  }
+
   const mutation = `
     mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) {
       metaobjectCreate(metaobject: $metaobject) {
@@ -256,12 +276,12 @@ export async function createMetaobjectEntry(
     metaobject: {
       type: METAOBJECT_TYPE,
       fields: [
-        { key: "identification", value: fields.identification },
-        { key: "name", value: fields.name },
-        { key: "email", value: fields.email },
-        { key: "code", value: fields.code },
+        { key: "identification", value: fields.identification.trim() },
+        { key: "name", value: fields.name.trim() },
+        { key: "email", value: fields.email.trim() },
+        { key: "code", value: fields.code.trim() },
         { key: "montant", value: String(fields.montant) },
-        { key: "type", value: fields.type },
+        { key: "type", value: fields.type.trim() },
       ],
     },
   };
@@ -279,14 +299,19 @@ export async function createMetaobjectEntry(
     };
 
     if (data.errors) {
-      return { success: false, error: JSON.stringify(data.errors) };
+      const errorMessages = data.errors.map((e: { message: string }) => e.message).join(", ");
+      return { success: false, error: `Erreur GraphQL: ${errorMessages}` };
     }
 
-    if (data.data?.metaobjectCreate?.userErrors?.length > 0) {
+    if (data.data?.metaobjectCreate?.userErrors && data.data.metaobjectCreate.userErrors.length > 0) {
       const errors = data.data.metaobjectCreate.userErrors;
+      const errorMessages = errors.map((e: { field: string[]; message: string }) => {
+        const fieldName = e.field.join(".");
+        return `${fieldName ? `Champ ${fieldName}: ` : ""}${e.message}`;
+      }).join(" | ");
       return {
         success: false,
-        error: errors.map((e: { message: string }) => e.message).join(", "),
+        error: errorMessages,
       };
     }
 
@@ -329,13 +354,31 @@ export async function updateMetaobjectEntry(
     }
   `;
 
+  // Validation : au moins un champ doit être fourni
   const fieldsArray: Array<{ key: string; value: string }> = [];
-  if (fields.identification !== undefined) fieldsArray.push({ key: "identification", value: fields.identification });
-  if (fields.name !== undefined) fieldsArray.push({ key: "name", value: fields.name });
-  if (fields.email !== undefined) fieldsArray.push({ key: "email", value: fields.email });
-  if (fields.code !== undefined) fieldsArray.push({ key: "code", value: fields.code });
-  if (fields.montant !== undefined) fieldsArray.push({ key: "montant", value: String(fields.montant) });
-  if (fields.type !== undefined) fieldsArray.push({ key: "type", value: fields.type });
+  
+  if (fields.identification !== undefined && fields.identification !== null && String(fields.identification).trim() !== "") {
+    fieldsArray.push({ key: "identification", value: String(fields.identification).trim() });
+  }
+  if (fields.name !== undefined && fields.name !== null && String(fields.name).trim() !== "") {
+    fieldsArray.push({ key: "name", value: String(fields.name).trim() });
+  }
+  if (fields.email !== undefined && fields.email !== null && String(fields.email).trim() !== "") {
+    fieldsArray.push({ key: "email", value: String(fields.email).trim() });
+  }
+  if (fields.code !== undefined && fields.code !== null && String(fields.code).trim() !== "") {
+    fieldsArray.push({ key: "code", value: String(fields.code).trim() });
+  }
+  if (fields.montant !== undefined && fields.montant !== null && !isNaN(fields.montant)) {
+    fieldsArray.push({ key: "montant", value: String(fields.montant) });
+  }
+  if (fields.type !== undefined && fields.type !== null && String(fields.type).trim() !== "") {
+    fieldsArray.push({ key: "type", value: String(fields.type).trim() });
+  }
+
+  if (fieldsArray.length === 0) {
+    return { success: false, error: "Aucun champ valide à modifier" };
+  }
 
   const variables = {
     id,
@@ -357,14 +400,19 @@ export async function updateMetaobjectEntry(
     };
 
     if (data.errors) {
-      return { success: false, error: JSON.stringify(data.errors) };
+      const errorMessages = data.errors.map((e: { message: string }) => e.message).join(", ");
+      return { success: false, error: `Erreur GraphQL: ${errorMessages}` };
     }
 
-    if (data.data?.metaobjectUpdate?.userErrors?.length > 0) {
+    if (data.data?.metaobjectUpdate?.userErrors && data.data.metaobjectUpdate.userErrors.length > 0) {
       const errors = data.data.metaobjectUpdate.userErrors;
+      const errorMessages = errors.map((e: { field: string[]; message: string }) => {
+        const fieldName = e.field.join(".");
+        return `${fieldName ? `Champ ${fieldName}: ` : ""}${e.message}`;
+      }).join(" | ");
       return {
         success: false,
-        error: errors.map((e: { message: string }) => e.message).join(", "),
+        error: errorMessages,
       };
     }
 
@@ -415,7 +463,7 @@ export async function deleteMetaobjectEntry(
       return { success: false, error: JSON.stringify(data.errors) };
     }
 
-    if (data.data?.metaobjectDelete?.userErrors?.length > 0) {
+    if (data.data?.metaobjectDelete?.userErrors && data.data.metaobjectDelete.userErrors.length > 0) {
       const errors = data.data.metaobjectDelete.userErrors;
       return {
         success: false,

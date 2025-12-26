@@ -50,13 +50,22 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   // Créer une nouvelle entrée
   if (actionType === "create_entry") {
+    const identification = (formData.get("identification") as string)?.trim() || "";
+    const name = (formData.get("name") as string)?.trim() || "";
+    const email = (formData.get("email") as string)?.trim() || "";
+    const code = (formData.get("code") as string)?.trim() || "";
+    const montantStr = (formData.get("montant") as string)?.trim() || "";
+    const type = (formData.get("type") as string)?.trim() || "";
+
+    const montant = montantStr ? parseFloat(montantStr) : NaN;
+
     const result = await createMetaobjectEntry(admin, {
-      identification: formData.get("identification") as string,
-      name: formData.get("name") as string,
-      email: formData.get("email") as string,
-      code: formData.get("code") as string,
-      montant: parseFloat(formData.get("montant") as string),
-      type: formData.get("type") as string,
+      identification,
+      name,
+      email,
+      code,
+      montant,
+      type,
     });
     if (result.success) {
       return redirect("/app");
@@ -68,7 +77,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (actionType === "update_entry") {
     const id = formData.get("id") as string;
     const field = formData.get("field") as string;
-    const value = formData.get("value") as string;
+    const value = (formData.get("value") as string)?.trim() || "";
+
+    // Validation : la valeur ne doit pas être vide
+    if (!value || value === "") {
+      return { error: `Le champ ${field} ne peut pas être vide` };
+    }
     
     const updateFields: {
       identification?: string;
@@ -80,7 +94,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     } = {};
     
     if (field === "montant") {
-      updateFields.montant = parseFloat(value);
+      const numValue = parseFloat(value);
+      if (isNaN(numValue)) {
+        return { error: "Le montant doit être un nombre valide" };
+      }
+      updateFields.montant = numValue;
     } else if (field === "identification") {
       updateFields.identification = value;
     } else if (field === "name") {
