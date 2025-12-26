@@ -1,5 +1,5 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
-import { useLoaderData, useActionData, Form, redirect } from "react-router";
+import { useLoaderData, useActionData, Form, redirect, useSearchParams } from "react-router";
 import React from "react";
 import { authenticate } from "../shopify.server";
 import {
@@ -184,10 +184,12 @@ function EntryRow({ entry, index }: {
 
   const [formData, setFormData] = React.useState(getInitialFormData());
 
-  // Mettre à jour formData quand entry change
+  // Mettre à jour formData quand entry change et désactiver le mode édition après un redirect
   React.useEffect(() => {
     const newData = getInitialFormData();
     setFormData(newData);
+    // Désactiver le mode édition quand les données changent (après un redirect par exemple)
+    setIsEditing(false);
   }, [entry.id, entry.identification, entry.name, entry.email, entry.code, entry.montant, entry.type]);
 
   const handleEdit = () => {
@@ -499,28 +501,26 @@ function NewEntryForm() {
 export default function Index() {
   const { status, entries } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
-  const [searchParams] = React.useState(() => {
-    if (typeof window !== "undefined") {
-      return new URLSearchParams(window.location.search);
-    }
-    return new URLSearchParams();
-  });
+  const [searchParams, setSearchParams] = useSearchParams();
   
   const successMessage = searchParams.get("success");
   const [showSuccess, setShowSuccess] = React.useState(!!successMessage);
 
   React.useEffect(() => {
-    if (successMessage) {
+    // Mettre à jour showSuccess quand searchParams change
+    const hasSuccess = !!searchParams.get("success");
+    setShowSuccess(hasSuccess);
+    
+    if (hasSuccess) {
       // Nettoyer l'URL après 4 secondes
       const timer = setTimeout(() => {
-        const url = new URL(window.location.href);
-        url.searchParams.delete("success");
-        window.history.replaceState({}, "", url.toString());
+        searchParams.delete("success");
+        setSearchParams(searchParams, { replace: true });
         setShowSuccess(false);
       }, 4000);
       return () => clearTimeout(timer);
     }
-  }, [successMessage]);
+  }, [searchParams, setSearchParams]);
 
   return (
     <div style={{
