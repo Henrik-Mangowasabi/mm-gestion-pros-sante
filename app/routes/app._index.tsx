@@ -165,9 +165,10 @@ function EntryRow({ entry, index }: {
   index: number;
 }) {
   const [isEditing, setIsEditing] = React.useState(false);
+  const [searchParams] = useSearchParams();
   
   // Fonction pour initialiser les données du formulaire
-  const getInitialFormData = () => {
+  const getInitialFormData = React.useCallback(() => {
     const data = {
       identification: entry.identification || "",
       name: entry.name || "",
@@ -180,25 +181,49 @@ function EntryRow({ entry, index }: {
     console.log("Entry data:", entry);
     console.log("Form data initialized:", data);
     return data;
-  };
+  }, [entry]);
 
-  const [formData, setFormData] = React.useState(getInitialFormData());
+  const [formData, setFormData] = React.useState(() => getInitialFormData());
+  const previousEntryId = React.useRef(entry.id);
+  const isUserEditing = React.useRef(false);
+
+  // Détecter si une mise à jour a réussi et réinitialiser le flag
+  React.useEffect(() => {
+    if (searchParams.get("success") === "entry_updated") {
+      isUserEditing.current = false;
+      setIsEditing(false);
+      const newData = getInitialFormData();
+      setFormData(newData);
+    }
+  }, [searchParams, getInitialFormData]);
 
   // Mettre à jour formData quand entry change et désactiver le mode édition après un redirect
   React.useEffect(() => {
-    const newData = getInitialFormData();
-    setFormData(newData);
-    // Désactiver le mode édition quand les données changent (après un redirect par exemple)
-    setIsEditing(false);
-  }, [entry.id, entry.identification, entry.name, entry.email, entry.code, entry.montant, entry.type]);
+    // Seulement mettre à jour si l'ID de l'entrée a changé (nouvelle entrée ou après redirect)
+    if (previousEntryId.current !== entry.id) {
+      previousEntryId.current = entry.id;
+      const newData = getInitialFormData();
+      setFormData(newData);
+      setIsEditing(false);
+      isUserEditing.current = false;
+    } else if (!isUserEditing.current) {
+      // Si l'utilisateur n'est pas en train d'éditer, mettre à jour les données
+      const newData = getInitialFormData();
+      setFormData(newData);
+    }
+  }, [entry.id, getInitialFormData]);
 
   const handleEdit = () => {
     console.log("Mode édition activé pour:", entry);
-    console.log("Données du formulaire:", formData);
+    // Réinitialiser formData avec les valeurs actuelles avant d'activer l'édition
+    const currentData = getInitialFormData();
+    setFormData(currentData);
+    isUserEditing.current = true;
     setIsEditing(true);
   };
 
   const handleCancel = () => {
+    isUserEditing.current = false;
     setIsEditing(false);
     // Réinitialiser les valeurs avec les valeurs actuelles de l'entrée
     setFormData(getInitialFormData());
