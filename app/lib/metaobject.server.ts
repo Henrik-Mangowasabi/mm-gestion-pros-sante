@@ -358,15 +358,30 @@ export async function updateMetaobjectEntry(
   // Construire le tableau de champs - TOUS les champs doivent être envoyés pour éviter la suppression
   const fieldsArray: Array<{ key: string; value: string }> = [];
   
-  // Toujours envoyer tous les champs (requis pour éviter la suppression par Shopify)
-  fieldsArray.push({ key: "identification", value: String(fields.identification || "").trim() });
-  fieldsArray.push({ key: "name", value: String(fields.name || "").trim() });
-  fieldsArray.push({ key: "email", value: String(fields.email || "").trim() });
-  fieldsArray.push({ key: "code", value: String(fields.code || "").trim() });
-  if (!isNaN(fields.montant)) {
+  // Toujours envoyer tous les champs avec leurs valeurs (ne jamais envoyer de chaînes vides)
+  if (fields.identification !== undefined && fields.identification !== null && String(fields.identification).trim() !== "") {
+    fieldsArray.push({ key: "identification", value: String(fields.identification).trim() });
+  }
+  if (fields.name !== undefined && fields.name !== null && String(fields.name).trim() !== "") {
+    fieldsArray.push({ key: "name", value: String(fields.name).trim() });
+  }
+  if (fields.email !== undefined && fields.email !== null && String(fields.email).trim() !== "") {
+    fieldsArray.push({ key: "email", value: String(fields.email).trim() });
+  }
+  if (fields.code !== undefined && fields.code !== null && String(fields.code).trim() !== "") {
+    fieldsArray.push({ key: "code", value: String(fields.code).trim() });
+  }
+  if (fields.montant !== undefined && fields.montant !== null && !isNaN(fields.montant)) {
     fieldsArray.push({ key: "montant", value: String(fields.montant) });
   }
-  fieldsArray.push({ key: "type", value: String(fields.type || "").trim() });
+  if (fields.type !== undefined && fields.type !== null && String(fields.type).trim() !== "") {
+    fieldsArray.push({ key: "type", value: String(fields.type).trim() });
+  }
+
+  // Vérifier qu'on a au moins un champ à mettre à jour
+  if (fieldsArray.length === 0) {
+    return { success: false, error: "Aucun champ valide à modifier" };
+  }
 
   const variables = {
     id,

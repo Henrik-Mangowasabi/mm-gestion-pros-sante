@@ -213,7 +213,7 @@ function EntryRow({ entry, index }: {
         {entry.id.split("/").pop()?.slice(-8)}
       </td>
       {isEditing ? (
-        <Form method="post">
+        <Form method="post" style={{ display: "contents" }}>
           <input type="hidden" name="action" value="update_entry" />
           <input type="hidden" name="id" value={entry.id} />
           <td style={{ padding: "12px" }}>
