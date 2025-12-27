@@ -1,10 +1,10 @@
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
-import { createShopifyDiscount, updateShopifyDiscount, deleteShopifyDiscount } from "./discount.server";
+import { createShopifyDiscount, updateShopifyDiscount, deleteShopifyDiscount, toggleShopifyDiscount } from "./discount.server";
 
 const METAOBJECT_TYPE = "mm_pro_de_sante";
 const METAOBJECT_NAME = "MM Pro de santé";
 
-// --- HELPERS EXISTANTS ---
+// --- HELPERS ---
 export async function checkMetaobjectExists(admin: AdminApiContext): Promise<boolean> {
   const query = `query { metaobjectDefinitions(first: 250) { edges { node { type } } } }`;
   try {
@@ -19,12 +19,9 @@ export async function checkMetaobjectStatus(admin: AdminApiContext) {
   return { exists };
 }
 
-// --- CREATE STRUCTURE (Modifié pour ajouter discount_id) ---
+// --- CREATE STRUCTURE ---
 export async function createMetaobject(admin: AdminApiContext) {
   const exists = await checkMetaobjectExists(admin);
-  // Note: Si ça existe déjà, on ne fait rien. Idéalement il faudrait mettre à jour la définition pour ajouter le champ manquant
-  // Mais pour faire simple, si tu as déjà créé la structure, il faudra peut-être la supprimer et la recréer, 
-  // OU aller dans Shopify Admin > Contenu > Metaobjects > Ta définition > Ajouter champ "discount_id" (texte, une ligne).
 
   const mutation = `
     mutation metaobjectDefinitionCreate($definition: MetaobjectDefinitionCreateInput!) {
@@ -42,8 +39,9 @@ export async function createMetaobject(admin: AdminApiContext) {
     { name: "Code Name", key: "code", type: "single_line_text_field", required: true },
     { name: "Montant", key: "montant", type: "number_decimal", required: true },
     { name: "Type", key: "type", type: "single_line_text_field", required: true, validations: [{ name: "choices", value: JSON.stringify(["%", "€"]) }] },
-    // NOUVEAU CHAMP POUR LIER LA RÉDUCTION
-    { name: "Discount ID", key: "discount_id", type: "single_line_text_field", required: false } 
+    { name: "Discount ID", key: "discount_id", type: "single_line_text_field", required: false },
+    // NOUVEAU CHAMP STATUS (true = actif, false = inactif)
+    { name: "Status", key: "status", type: "boolean", required: false }
   ];
 
   const variables = {
@@ -86,17 +84,20 @@ export async function getMetaobjectEntries(admin: AdminApiContext) {
       const node = edge.node;
       const entry: any = { id: node.id };
       node.fields.forEach((f: any) => {
-        entry[f.key] = f.key === "montant" ? (f.value ? parseFloat(f.value) : null) : f.value;
+        if (f.key === "montant") entry[f.key] = f.value ? parseFloat(f.value) : null;
+        else if (f.key === "status") entry[f.key] = f.value === "true"; // Conversion string -> boolean
+        else entry[f.key] = f.value;
       });
+      // Valeur par défaut si status n'existe pas encore
+      if (entry.status === undefined) entry.status = true; 
       return entry;
     }).filter(Boolean) || [];
     return { entries };
   } catch (error) { return { entries: [], error: String(error) }; }
 }
 
-// --- CREATE ENTRY (AVEC CRÉATION DE PROMO) ---
+// --- CREATE ENTRY ---
 export async function createMetaobjectEntry(admin: AdminApiContext, fields: any) {
-  // 1. Créer le code promo d'abord
   const discountName = `Code promo Pro Sante - ${fields.name}`;
   const discountResult = await createShopifyDiscount(admin, {
     code: fields.code,
@@ -109,7 +110,6 @@ export async function createMetaobjectEntry(admin: AdminApiContext, fields: any)
     return { success: false, error: "Erreur création promo Shopify: " + discountResult.error };
   }
 
-  // 2. Créer l'entrée Métaobjet avec l'ID du discount
   const mutation = `
     mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) {
       metaobjectCreate(metaobject: $metaobject) {
@@ -126,57 +126,47 @@ export async function createMetaobjectEntry(admin: AdminApiContext, fields: any)
     { key: "code", value: String(fields.code) },
     { key: "montant", value: String(fields.montant) },
     { key: "type", value: String(fields.type) },
-    { key: "discount_id", value: discountResult.discountId || "" } // On sauvegarde le lien
+    { key: "discount_id", value: discountResult.discountId || "" },
+    { key: "status", value: "true" } // Actif par défaut à la création
   ];
 
   try {
     const response = await admin.graphql(mutation, { variables: { metaobject: { type: METAOBJECT_TYPE, fields: fieldsInput } } });
     const data = await response.json() as any;
     if (data.data?.metaobjectCreate?.userErrors?.length > 0) {
-      // Si échec métaobjet, faudrait idéalement supprimer le discount créé juste avant, mais restons simple
       return { success: false, error: data.data.metaobjectCreate.userErrors[0].message };
     }
     return { success: true };
   } catch (error) { return { success: false, error: String(error) }; }
 }
 
-// --- UPDATE ENTRY (AVEC UPDATE DE PROMO) ---
+// --- UPDATE ENTRY ---
 export async function updateMetaobjectEntry(admin: AdminApiContext, id: string, fields: any) {
-  // 1. Récupérer l'entrée actuelle pour avoir le discount_id
-  const currentEntryQuery = `
-    query($id: ID!) {
-      metaobject(id: $id) {
-        field(key: "discount_id") { value }
-      }
-    }
-  `;
-  
+  // Récupérer l'ID discount existant
+  const currentEntryQuery = `query($id: ID!) { metaobject(id: $id) { field(key: "discount_id") { value } } }`;
   let existingDiscountId = null;
   try {
     const r = await admin.graphql(currentEntryQuery, { variables: { id } });
     const d = await r.json() as any;
     existingDiscountId = d.data?.metaobject?.field?.value;
-  } catch (e) { console.error("Impossible de récupérer le discount ID existant"); }
+  } catch (e) {}
 
-  // 2. Si on a un ID, on met à jour la promo Shopify
   if (existingDiscountId) {
-    const discountName = `Code promo Pro Sante - ${fields.name}`;
-    const updateResult = await updateShopifyDiscount(admin, existingDiscountId, {
-      code: fields.code,
-      montant: fields.montant,
-      type: fields.type,
-      name: discountName
-    });
-    
-    if (!updateResult.success) {
-      console.error("Attention: Echec mise à jour discount Shopify", updateResult.error);
-      // On continue quand même pour mettre à jour le métaobjet
+    // Si c'est juste un toggle de status
+    if (fields.status !== undefined && Object.keys(fields).length === 1) {
+       await toggleShopifyDiscount(admin, existingDiscountId, fields.status);
+    } else {
+       // Sinon mise à jour complète
+       const discountName = `Code promo Pro Sante - ${fields.name}`;
+       await updateShopifyDiscount(admin, existingDiscountId, {
+         code: fields.code,
+         montant: fields.montant,
+         type: fields.type,
+         name: discountName
+       });
     }
-  } else {
-      // Cas optionnel : Si pas d'ID (anciennes entrées), on pourrait en créer un ici
   }
 
-  // 3. Mettre à jour le métaobjet
   const mutation = `
     mutation metaobjectUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) {
       metaobjectUpdate(id: $id, metaobject: $metaobject) {
@@ -186,14 +176,15 @@ export async function updateMetaobjectEntry(admin: AdminApiContext, id: string, 
     }
   `;
 
-  const fieldsInput = [
-    { key: "identification", value: String(fields.identification) },
-    { key: "name", value: String(fields.name) },
-    { key: "email", value: String(fields.email) },
-    { key: "code", value: String(fields.code) },
-    { key: "montant", value: String(fields.montant) },
-    { key: "type", value: String(fields.type) },
-  ];
+  // Construction dynamique des champs à mettre à jour
+  const fieldsInput = [];
+  if (fields.identification) fieldsInput.push({ key: "identification", value: String(fields.identification) });
+  if (fields.name) fieldsInput.push({ key: "name", value: String(fields.name) });
+  if (fields.email) fieldsInput.push({ key: "email", value: String(fields.email) });
+  if (fields.code) fieldsInput.push({ key: "code", value: String(fields.code) });
+  if (fields.montant) fieldsInput.push({ key: "montant", value: String(fields.montant) });
+  if (fields.type) fieldsInput.push({ key: "type", value: String(fields.type) });
+  if (fields.status !== undefined) fieldsInput.push({ key: "status", value: String(fields.status) });
 
   try {
     const response = await admin.graphql(mutation, { variables: { id, metaobject: { fields: fieldsInput } } });
@@ -205,9 +196,8 @@ export async function updateMetaobjectEntry(admin: AdminApiContext, id: string, 
   } catch (error) { return { success: false, error: String(error) }; }
 }
 
-// --- DELETE ENTRY (AVEC SUPPRESSION DE PROMO) ---
+// --- DELETE ENTRY ---
 export async function deleteMetaobjectEntry(admin: AdminApiContext, id: string) {
-  // 1. Récupérer le discount_id avant suppression
   const currentEntryQuery = `query($id: ID!) { metaobject(id: $id) { field(key: "discount_id") { value } } }`;
   let existingDiscountId = null;
   try {
@@ -216,27 +206,13 @@ export async function deleteMetaobjectEntry(admin: AdminApiContext, id: string) 
     existingDiscountId = d.data?.metaobject?.field?.value;
   } catch (e) {}
 
-  // 2. Supprimer la promo Shopify
   if (existingDiscountId) {
     await deleteShopifyDiscount(admin, existingDiscountId);
   }
 
-  // 3. Supprimer le métaobjet
-  const mutation = `
-    mutation metaobjectDelete($id: ID!) {
-      metaobjectDelete(id: $id) {
-        deletedId
-        userErrors { field message }
-      }
-    }
-  `;
-
+  const mutation = `mutation metaobjectDelete($id: ID!) { metaobjectDelete(id: $id) { deletedId, userErrors { field message } } }`;
   try {
     const response = await admin.graphql(mutation, { variables: { id } });
-    const data = await response.json() as any;
-    if (data.data?.metaobjectDelete?.userErrors?.length > 0) {
-      return { success: false, error: data.data.metaobjectDelete.userErrors[0].message };
-    }
     return { success: true };
   } catch (error) { return { success: false, error: String(error) }; }
 }

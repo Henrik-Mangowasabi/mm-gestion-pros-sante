@@ -150,3 +150,51 @@ export async function deleteShopifyDiscount(admin: AdminApiContext, discountId: 
     return { success: false, error: String(error) };
   }
 }
+
+// À ajouter à la fin de app/lib/discount.server.ts
+
+/**
+ * Active ou Désactive un code de réduction
+ */
+export async function toggleShopifyDiscount(
+    admin: AdminApiContext,
+    discountId: string,
+    shouldBeActive: boolean
+  ): Promise<{ success: boolean; error?: string }> {
+    
+    const mutation = `
+      mutation discountCodeBasicUpdate($id: ID!, $basicCodeDiscount: DiscountCodeBasicInput!) {
+        discountCodeBasicUpdate(id: $id, basicCodeDiscount: $basicCodeDiscount) {
+          codeDiscountNode {
+            id
+            endsAt
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }
+    `;
+  
+    const variables = {
+      id: discountId,
+      basicCodeDiscount: {
+        // Si on veut activer : endsAt = null. Si on veut désactiver : endsAt = maintenant.
+        endsAt: shouldBeActive ? null : new Date().toISOString()
+      }
+    };
+  
+    try {
+      const response = await admin.graphql(mutation, { variables });
+      const result = await response.json() as any;
+  
+      if (result.data?.discountCodeBasicUpdate?.userErrors?.length > 0) {
+        return { success: false, error: result.data.discountCodeBasicUpdate.userErrors[0].message };
+      }
+  
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: String(error) };
+    }
+  }
