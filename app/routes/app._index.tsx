@@ -40,17 +40,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const formData = await request.formData();
   const actionType = formData.get("action");
 
-  // 1. Créer la structure
+  // 1. Create structure
   if (actionType === "create_structure") {
     const result = await createMetaobject(admin);
     if (result.success) {
       await new Promise(resolve => setTimeout(resolve, 2000));
       return redirect("/app");
     }
-    return { error: result.error || "Erreur structure" };
+    return { error: result.error || "Structure error" };
   }
 
-  // 2. Créer une entrée
+  // 2. Create entry
   if (actionType === "create_entry") {
     let identification = (formData.get("identification") as string)?.trim() || "";
     const name = (formData.get("name") as string)?.trim() || "";
@@ -69,10 +69,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       url.searchParams.set("success", "entry_created");
       return redirect(url.pathname + url.search);
     }
-    return { error: result.error || "Erreur création" };
+    return { error: result.error || "Creation error" };
   }
 
-  // 3. Modifier une entrée
+  // 3. Update entry
   if (actionType === "update_entry") {
     const id = formData.get("id") as string;
     const identification = (formData.get("identification") as string)?.trim() || "";
@@ -82,7 +82,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const montantStr = (formData.get("montant") as string)?.trim() || "";
     const type = (formData.get("type") as string)?.trim() || "";
 
-    if (!id) return { error: "ID manquant" };
+    if (!id) return { error: "Missing ID" };
     
     const result = await updateMetaobjectEntry(admin, id, {
       identification, name, email, code, montant: parseFloat(montantStr), type
@@ -93,10 +93,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       url.searchParams.set("success", "entry_updated");
       return redirect(url.pathname + url.search);
     }
-    return { error: result.error || "Erreur modification" };
+    return { error: result.error || "Update error" };
   }
 
-  // 4. Supprimer une entrée
+  // 4. Delete entry
   if (actionType === "delete_entry") {
     const id = formData.get("id") as string;
     const result = await deleteMetaobjectEntry(admin, id);
@@ -106,19 +106,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       url.searchParams.set("success", "entry_deleted");
       return redirect(url.pathname + url.search);
     }
-    return { error: result.error || "Erreur suppression" };
+    return { error: result.error || "Deletion error" };
   }
 
-  return { error: "Action inconnue" };
+  return { error: "Unknown action" };
 };
 
-// --- STYLES COMMUNS ---
+// --- STYLES ---
 const styles = {
   cell: { padding: "10px 8px", fontSize: "0.9rem", verticalAlign: "middle" },
   input: { 
     width: "100%", padding: "6px 8px", 
     border: "1px solid #ccc", borderRadius: "4px", fontSize: "0.9rem",
-    boxSizing: "border-box" as const // Empêche l'input de dépasser
+    boxSizing: "border-box" as const 
   },
   btnAction: {
     padding: "6px", borderRadius: "4px", border: "none", cursor: "pointer", 
@@ -126,7 +126,7 @@ const styles = {
   }
 };
 
-// --- COMPOSANT LIGNE (Row) ---
+// --- ROW COMPONENT ---
 function EntryRow({ entry, index }: { entry: any; index: number }) {
   const [isEditing, setIsEditing] = React.useState(false);
   const [searchParams] = useSearchParams();
@@ -192,8 +192,8 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
           </td>
           <td style={{...styles.cell, width: "90px"}}>
             <div style={{ display: "flex", gap: "4px" }}>
-              <button type="button" onClick={handleSave} style={{...styles.btnAction, backgroundColor: "#008060", color: "white"}} title="Sauvegarder">✓</button>
-              <button type="button" onClick={handleCancel} style={{...styles.btnAction, backgroundColor: "#e2e2e2", color: "#333"}} title="Annuler">✕</button>
+              <button type="button" onClick={handleSave} style={{...styles.btnAction, backgroundColor: "#008060", color: "white"}} title="Save">✓</button>
+              <button type="button" onClick={handleCancel} style={{...styles.btnAction, backgroundColor: "#e2e2e2", color: "#333"}} title="Cancel">✕</button>
             </div>
           </td>
         </>
@@ -207,10 +207,10 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
           <td style={styles.cell}>{entry.type}</td>
           <td style={styles.cell}>
             <div style={{ display: "flex", gap: "4px" }}>
-              <button type="button" onClick={() => setIsEditing(true)} style={{...styles.btnAction, backgroundColor: "#008060", color: "white"}} title="Modifier">✎</button>
-              <Form method="post" onSubmit={e => !confirm("Supprimer ?") && e.preventDefault()}>
+              <button type="button" onClick={() => setIsEditing(true)} style={{...styles.btnAction, backgroundColor: "#008060", color: "white"}} title="Edit">✎</button>
+              <Form method="post" onSubmit={e => !confirm("Delete?") && e.preventDefault()}>
                 <input type="hidden" name="action" value="delete_entry" /><input type="hidden" name="id" value={entry.id} />
-                <button type="submit" style={{...styles.btnAction, backgroundColor: "#d82c0d", color: "white"}} title="Supprimer">🗑</button>
+                <button type="submit" style={{...styles.btnAction, backgroundColor: "#d82c0d", color: "white"}} title="Delete">🗑</button>
               </Form>
             </div>
           </td>
@@ -220,9 +220,11 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
   );
 }
 
-// --- FORMULAIRE NOUVELLE ENTRÉE ---
+// --- NEW ENTRY FORM ---
+// IMPORTANT FIX: We removed display:contents and use useSubmit for clean HTML
 function NewEntryForm() {
   const [formData, setFormData] = React.useState({ identification: "", name: "", email: "", code: "", montant: "", type: "" });
+  const submit = useSubmit();
 
   React.useEffect(() => {
     if (new URLSearchParams(window.location.search).get("success") === "entry_created") {
@@ -230,30 +232,36 @@ function NewEntryForm() {
     }
   }, []);
 
+  const handleAdd = (e: React.FormEvent) => {
+    e.preventDefault();
+    submit({
+        action: "create_entry",
+        ...formData
+    }, { method: "post" });
+  }
+
   return (
     <tr style={{ backgroundColor: "#f0f8ff", borderBottom: "2px solid #ddd" }}>
-      <td style={{...styles.cell, color: "#008060", fontWeight: "bold"}}>Nouveau</td>
-      <Form method="post" style={{display: "contents"}}>
-        <input type="hidden" name="action" value="create_entry" />
-        <td style={styles.cell}><input type="text" name="identification" placeholder="Auto" value={formData.identification} onChange={e => setFormData({...formData, identification: e.target.value})} style={styles.input} /></td>
-        <td style={styles.cell}><input type="text" name="name" placeholder="Nom *" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={styles.input} /></td>
-        <td style={styles.cell}><input type="email" name="email" placeholder="Email *" required value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} style={styles.input} /></td>
-        <td style={styles.cell}><input type="text" name="code" placeholder="Code *" required value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} style={styles.input} /></td>
-        <td style={styles.cell}><input type="number" step="0.01" name="montant" placeholder="Montant *" required value={formData.montant} onChange={e => setFormData({...formData, montant: e.target.value})} style={styles.input} /></td>
-        <td style={styles.cell}>
-          <select name="type" required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} style={styles.input}>
-            <option value="">Type</option><option value="%">%</option><option value="€">€</option>
-          </select>
-        </td>
-        <td style={styles.cell}>
-          <button type="submit" style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", width: "100%" }}>Ajouter</button>
-        </td>
-      </Form>
+      <td style={{...styles.cell, color: "#008060", fontWeight: "bold"}}>New</td>
+      {/* NO FORM TAG HERE to break the table structure */}
+      <td style={styles.cell}><input type="text" name="identification" placeholder="Auto" value={formData.identification} onChange={e => setFormData({...formData, identification: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}><input type="text" name="name" placeholder="Name *" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}><input type="email" name="email" placeholder="Email *" required value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}><input type="text" name="code" placeholder="Code *" required value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}><input type="number" step="0.01" name="montant" placeholder="Amount *" required value={formData.montant} onChange={e => setFormData({...formData, montant: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}>
+        <select name="type" required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} style={styles.input}>
+          <option value="">Type</option><option value="%">%</option><option value="€">€</option>
+        </select>
+      </td>
+      <td style={styles.cell}>
+        <button type="button" onClick={handleAdd} style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", width: "100%" }}>Add</button>
+      </td>
     </tr>
   );
 }
 
-// --- PAGE PRINCIPALE ---
+// --- MAIN PAGE ---
 export default function Index() {
   const { status, entries } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
@@ -282,18 +290,18 @@ export default function Index() {
       padding: "20px", 
       backgroundColor: "#f6f6f7", 
       fontFamily: "-apple-system, BlinkMacSystemFont, 'San Francisco', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
-      boxSizing: "border-box" // CLÉ POUR ÉVITER LE SCROLL BAR LATÉRAL
+      boxSizing: "border-box"
     }}>
-      <h1 style={{ color: "#202223", marginBottom: "20px", textAlign: "center", fontSize: "1.5rem", fontWeight: "600" }}>Gestion Pro de santé</h1>
+      <h1 style={{ color: "#202223", marginBottom: "20px", textAlign: "center", fontSize: "1.5rem", fontWeight: "600" }}>Pro Health Management</h1>
       
-      {showSuccess && <div style={{ ...bannerStyle, backgroundColor: "#008060", color: "white" }}>✓ Action effectuée avec succès !</div>}
+      {showSuccess && <div style={{ ...bannerStyle, backgroundColor: "#008060", color: "white" }}>✓ Action successful!</div>}
       {actionData?.error && <div style={{ ...bannerStyle, backgroundColor: "#fee", color: "#d82c0d", border: "1px solid #fcc" }}>⚠️ {actionData.error}</div>}
       
       {status.exists ? (
         <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
           <div style={{ backgroundColor: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.05)", overflow: "hidden" }}>
             <div style={{ padding: "16px 20px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h2 style={{ margin: 0, color: "#333", fontSize: "1.1rem" }}>Liste des entrées ({entries.length})</h2>
+              <h2 style={{ margin: 0, color: "#333", fontSize: "1.1rem" }}>Entry List ({entries.length})</h2>
             </div>
             
             <div style={{ overflowX: "auto" }}>
@@ -305,7 +313,7 @@ export default function Index() {
                     <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555" }}>Name</th>
                     <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555" }}>Email</th>
                     <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555" }}>Code</th>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555", width: "80px" }}>Montant</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555", width: "80px" }}>Amount</th>
                     <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555", width: "70px" }}>Type</th>
                     <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555", width: "90px" }}>Actions</th>
                   </tr>
@@ -320,7 +328,7 @@ export default function Index() {
         </div>
       ) : (
         <div style={{ textAlign: "center", marginTop: "50px" }}>
-          <Form method="post"><input type="hidden" name="action" value="create_structure" /><button type="submit" style={{ padding: "10px 20px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>Créer la structure</button></Form>
+          <Form method="post"><input type="hidden" name="action" value="create_structure" /><button type="submit" style={{ padding: "10px 20px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>Create Structure</button></Form>
         </div>
       )}
     </div>
