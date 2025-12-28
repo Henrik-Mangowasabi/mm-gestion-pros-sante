@@ -220,26 +220,27 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
   );
 }
 
-// AJOUTER useSearchParams dans les imports en haut si ce n'est pas déjà fait :
-// import { useLoaderData, useActionData, Form, redirect, useSearchParams, useSubmit } from "react-router";
+// Assure-toi d'avoir importé useSearchParams en haut du fichier :
+// import { useSearchParams, useSubmit } from "react-router";
 
 function NewEntryForm() {
   const [formData, setFormData] = React.useState({ identification: "", name: "", email: "", code: "", montant: "", type: "" });
   const submit = useSubmit();
-  const [searchParams] = useSearchParams(); // <--- On récupère les params ici
+  
+  // NOUVEAU : On utilise le hook pour écouter l'URL
+  const [searchParams] = useSearchParams();
 
-  // On écoute les changements de l'URL (searchParams)
+  // Ce code se lance à chaque fois que l'URL change
   React.useEffect(() => {
     if (searchParams.get("success") === "entry_created") {
-      // On vide le formulaire
+      // 1. On vide les champs
       setFormData({ identification: "", name: "", email: "", code: "", montant: "", type: "" });
       
-      // Petite astuce UX : On remet le focus sur le premier champ (Nom) pour enchainer
-      // (Assure-toi que ton input "name" a bien l'id ou le ref si tu veux faire ça, sinon c'est optionnel)
-      const firstInput = document.querySelector('input[name="name"]') as HTMLInputElement;
-      if (firstInput) firstInput.focus();
+      // 2. Astuce Pro : On remet le focus sur le champ "Nom" pour enchaîner
+      const nameInput = document.querySelector('input[name="name"]') as HTMLInputElement;
+      if (nameInput) nameInput.focus();
     }
-  }, [searchParams]); // <--- IMPORTANT : on relance l'effet quand l'URL change
+  }, [searchParams]); // <--- L'astuce est ici : on surveille searchParams
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
