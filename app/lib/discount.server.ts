@@ -111,49 +111,48 @@ export async function updateShopifyDiscount(
  * Active ou Désactive (Status)
  */
 export async function toggleShopifyDiscount(
-  admin: AdminApiContext,
-  discountId: string,
-  shouldBeActive: boolean
-): Promise<{ success: boolean; error?: string }> {
-  
-  const mutation = `
-    mutation discountCodeBasicUpdate($id: ID!, $basicCodeDiscount: DiscountCodeBasicInput!) {
-      discountCodeBasicUpdate(id: $id, basicCodeDiscount: $basicCodeDiscount) {
-        codeDiscountNode { 
-          id
-          endsAt
-        }
-        userErrors {
-          field
-          message
+    admin: AdminApiContext,
+    discountId: string,
+    shouldBeActive: boolean
+  ): Promise<{ success: boolean; error?: string }> {
+    
+    const mutation = `
+      mutation discountCodeBasicUpdate($id: ID!, $basicCodeDiscount: DiscountCodeBasicInput!) {
+        discountCodeBasicUpdate(id: $id, basicCodeDiscount: $basicCodeDiscount) {
+          codeDiscountNode { 
+            id
+            # J'ai supprimé "endsAt" ici car cela causait l'erreur
+          }
+          userErrors {
+            field
+            message
+          }
         }
       }
+    `;
+  
+    const variables = {
+      id: discountId,
+      basicCodeDiscount: {
+        // La logique d'envoi reste la même : on envoie une date pour désactiver, null pour activer
+        endsAt: shouldBeActive ? null : new Date().toISOString()
+      }
+    };
+  
+    try {
+      const response = await admin.graphql(mutation, { variables });
+      const result = await response.json() as any;
+  
+      if (result.data?.discountCodeBasicUpdate?.userErrors?.length > 0) {
+        console.error("Erreur Toggle:", result.data.discountCodeBasicUpdate.userErrors);
+        return { success: false, error: result.data.discountCodeBasicUpdate.userErrors[0].message };
+      }
+  
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: String(error) };
     }
-  `;
-
-  const variables = {
-    id: discountId,
-    basicCodeDiscount: {
-      // Pour désactiver, on met la date de fin à "maintenant"
-      // Pour activer, on met null (pas de date de fin)
-      endsAt: shouldBeActive ? null : new Date().toISOString()
-    }
-  };
-
-  try {
-    const response = await admin.graphql(mutation, { variables });
-    const result = await response.json() as any;
-
-    if (result.data?.discountCodeBasicUpdate?.userErrors?.length > 0) {
-      console.error("Erreur Toggle:", result.data.discountCodeBasicUpdate.userErrors);
-      return { success: false, error: result.data.discountCodeBasicUpdate.userErrors[0].message };
-    }
-
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: String(error) };
   }
-}
 
 /**
  * Supprime un code de réduction
