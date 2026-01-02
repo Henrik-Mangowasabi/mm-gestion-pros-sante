@@ -158,11 +158,11 @@ export async function toggleShopifyDiscount(
  * Supprime un code de réduction
  */
 export async function deleteShopifyDiscount(admin: AdminApiContext, discountId: string) {
-  // CORRECTION MAJEURE ICI : deletedCodeDiscountId au lieu de deletedDiscountCodeId
+  // CORRECTION : On ne demande PLUS l'ID en retour ("deletedCodeDiscountId").
+  // On demande juste "userErrors". Comme ça, peu importe la version de l'API, ça ne plante pas.
   const mutation = `
     mutation discountCodeDelete($id: ID!) {
       discountCodeDelete(id: $id) {
-        deletedCodeDiscountId 
         userErrors {
           field
           message
@@ -175,11 +175,18 @@ export async function deleteShopifyDiscount(admin: AdminApiContext, discountId: 
     const response = await admin.graphql(mutation, { variables: { id: discountId } });
     const result = await response.json() as any;
     
+    // Si la requête elle-même a des erreurs de syntaxe (le fameux graphQLErrors)
+    if (result.errors) {
+        console.error("❌ ERREUR GRAPHQL CRITIQUE:", JSON.stringify(result.errors, null, 2));
+        return { success: false, error: "Erreur technique Shopify (Logs serveur)" };
+    }
+
     if (result.data?.discountCodeDelete?.userErrors?.length > 0) {
       return { success: false, error: result.data.discountCodeDelete.userErrors[0].message };
     }
     return { success: true };
   } catch (error) {
+    console.error("❌ Exception deleteShopifyDiscount:", error);
     return { success: false, error: String(error) };
   }
 }
