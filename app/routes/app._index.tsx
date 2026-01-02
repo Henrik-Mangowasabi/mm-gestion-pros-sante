@@ -284,6 +284,8 @@ export default function Index() {
   const [searchParams, setSearchParams] = useSearchParams();
   const successType = searchParams.get("success");
 
+  console.log("🚨 CONTENU EXACT DE ENTRIES :", entries);
+  
   // LOGIQUE DES MESSAGES
   let successMessage = "";
   if (successType === "entry_created") successMessage = "Entrée créée avec succès";
