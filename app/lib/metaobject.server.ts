@@ -1,6 +1,6 @@
 // FICHIER : app/lib/metaobject.server.ts
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
-import { createShopifyDiscount, updateShopifyDiscount, deleteShopifyDiscount, toggleShopifyDiscount } from "./discount.server";
+import { createShopifyDiscount, updateShopifyDiscount, deleteShopifyDiscount } from "./discount.server";
 import { ensureCustomerPro, removeCustomerProTag, updateCustomerEmailInShopify } from "./customer.server";
 
 const METAOBJECT_TYPE = "mm_pro_de_sante";
@@ -8,6 +8,7 @@ const METAOBJECT_NAME = "MM Pro de santé";
 
 // --- VÉRIFICATIONS ---
 export async function checkMetaobjectExists(admin: AdminApiContext): Promise<boolean> {
+  // On récupère tout et on cherche si notre type existe
   const query = `query { metaobjectDefinitions(first: 250) { edges { node { type } } } }`;
   try {
     const response = await admin.graphql(query);
@@ -50,7 +51,6 @@ export async function createMetaobject(admin: AdminApiContext) {
     const response = await admin.graphql(mutation, { variables });
     const data = await response.json() as any;
     if (data.data?.metaobjectDefinitionCreate?.userErrors?.length > 0) {
-        // On considère que si ça existe déjà, ce n'est pas grave
         const errors = data.data.metaobjectDefinitionCreate.userErrors;
         if(errors[0].message.includes("taken")) return { success: true };
         return { success: false, error: errors[0].message };
@@ -94,6 +94,8 @@ export async function getMetaobjectEntries(admin: AdminApiContext) {
 // --- CRÉATION ENTRÉE ---
 export async function createMetaobjectEntry(admin: AdminApiContext, fields: any) {
   const discountName = `Code promo Pro Sante - ${fields.name}`;
+  
+  // 1. Créer le code promo
   const discountResult = await createShopifyDiscount(admin, {
     code: fields.code,
     montant: fields.montant,
@@ -103,6 +105,7 @@ export async function createMetaobjectEntry(admin: AdminApiContext, fields: any)
 
   if (!discountResult.success) return { success: false, error: "Erreur Promo: " + discountResult.error };
 
+  // 2. Gérer le client (Création ou Tag)
   const clientResult = await ensureCustomerPro(admin, fields.email, fields.name);
   const customerIdToSave = clientResult.customerId ? String(clientResult.customerId) : "";
 
@@ -128,13 +131,50 @@ export async function createMetaobjectEntry(admin: AdminApiContext, fields: any)
   } catch (error) { return { success: false, error: String(error) }; }
 }
 
-// --- UPDATE ---
+// --- UPDATE (C'est ici la logique critique) ---
 export async function updateMetaobjectEntry(admin: AdminApiContext, id: string, fields: any) {
-  // ... (Ta logique d'update existante reste identique, je la raccourcis ici pour la lisibilité mais garde ton code d'update !)
-  // Copie ici ton code d'update précédent complet ou demande-moi si tu l'as perdu.
-  // Pour faire court, la logique d'update ne change pas pour la suppression.
-  // ...
-  // VERSION SIMPLIFIÉE POUR L'EXEMPLE (Garde ta version complète avec logique Email/Discount)
+  console.log(`🔄 Update demandé pour ${id}`, fields);
+
+  // 1. Récupérer les anciennes valeurs (pour avoir les ID Discount et Customer)
+  const currentEntryQuery = `query($id: ID!) { metaobject(id: $id) { fields { key, value } } }`;
+  let oldData: any = {};
+  
+  try {
+    const r = await admin.graphql(currentEntryQuery, { variables: { id } });
+    const d = await r.json() as any;
+    const currentFields = d.data?.metaobject?.fields || [];
+    currentFields.forEach((f: any) => { oldData[f.key] = f.value; });
+  } catch (e) {
+    return { success: false, error: "Impossible de lire l'entrée avant update" };
+  }
+
+  // 2. Mise à jour du Code Promo Shopify (Si nécessaire)
+  if (oldData.discount_id) {
+    const discountName = `Code promo Pro Sante - ${fields.name}`;
+    await updateShopifyDiscount(admin, oldData.discount_id, {
+      code: fields.code,
+      montant: fields.montant,
+      type: fields.type,
+      name: discountName
+    });
+  }
+
+  // 3. Mise à jour du Client Shopify (Si l'email a changé)
+  // On compare l'ancien email stocké et le nouveau
+  if (oldData.customer_id && fields.email && fields.email.trim().toLowerCase() !== (oldData.email || "").trim().toLowerCase()) {
+    console.log(`📧 Changement email détecté : ${oldData.email} -> ${fields.email}`);
+    
+    const updateClientResult = await updateCustomerEmailInShopify(admin, oldData.customer_id, fields.email, fields.name);
+    
+    if (!updateClientResult.success) {
+      console.error("❌ Echec update email client:", updateClientResult.error);
+      // On continue quand même pour mettre à jour le métaobjet
+    } else {
+      console.log("✅ Email client Shopify mis à jour avec succès.");
+    }
+  }
+
+  // 4. Mise à jour du Métaobjet
   const fieldsInput: any[] = [];
   if (fields.identification) fieldsInput.push({ key: "identification", value: String(fields.identification) });
   if (fields.name) fieldsInput.push({ key: "name", value: String(fields.name) });
@@ -145,15 +185,17 @@ export async function updateMetaobjectEntry(admin: AdminApiContext, id: string, 
   if (fields.status !== undefined) fieldsInput.push({ key: "status", value: String(fields.status) });
 
   const mutation = `mutation metaobjectUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) { metaobjectUpdate(id: $id, metaobject: $metaobject) { userErrors { field message } } }`;
+  
   try {
-      await admin.graphql(mutation, { variables: { id, metaobject: { fields: fieldsInput } } });
+      const r = await admin.graphql(mutation, { variables: { id, metaobject: { fields: fieldsInput } } });
+      const d = await r.json() as any;
+      if (d.data?.metaobjectUpdate?.userErrors?.length > 0) return { success: false, error: d.data.metaobjectUpdate.userErrors[0].message };
       return { success: true };
   } catch (e) { return { success: false, error: String(e) }; }
 }
 
 // --- DELETE ENTREE SIMPLE ---
 export async function deleteMetaobjectEntry(admin: AdminApiContext, id: string) {
-  // Récupération infos pour nettoyage
   const currentEntryQuery = `query($id: ID!) { metaobject(id: $id) { fields { key, value } } }`;
   try {
     const r = await admin.graphql(currentEntryQuery, { variables: { id } });
@@ -175,25 +217,32 @@ export async function deleteMetaobjectEntry(admin: AdminApiContext, id: string) 
   } catch (error) { return { success: false, error: String(error) }; }
 }
 
-// --- DELETE TOTAL (NUCLÉAIRE) ---
+// --- DELETE TOTAL (CORRIGÉ) ---
 export async function destroyMetaobjectStructure(admin: AdminApiContext) {
   console.log("☢️ DÉMARRAGE SUPPRESSION TOTALE...");
 
   try {
-    // 1. Récupérer l'ID de la définition AVANT de supprimer les entrées
-    const queryDefinition = `query { metaobjectDefinitions(first: 10, query:"type:${METAOBJECT_TYPE}") { edges { node { id } } } }`;
-    const rDef = await admin.graphql(queryDefinition);
+    // 1. Récupérer TOUTES les définitions (CORRECTION ICI : PLUS DE QUERY DANS L'ARGUMENT)
+    const queryDefinitions = `query { metaobjectDefinitions(first: 250) { edges { node { id, type } } } }`;
+    const rDef = await admin.graphql(queryDefinitions);
     const dDef = await rDef.json() as any;
-    const definitionId = dDef.data?.metaobjectDefinitions?.edges?.[0]?.node?.id;
+    
+    // On cherche l'ID en filtrant en JS (car l'API ne supporte pas bien le filtre query sur ce endpoint)
+    const definitionNode = dDef.data?.metaobjectDefinitions?.edges?.find(
+        (e: any) => e.node.type === METAOBJECT_TYPE
+    )?.node;
+    
+    const definitionId = definitionNode?.id;
 
-    // 2. Récupérer et supprimer toutes les entrées
+    // 2. Récupérer et supprimer toutes les entrées proprement
     const { entries } = await getMetaobjectEntries(admin);
     console.log(`🧹 Nettoyage de ${entries.length} entrées...`);
     for (const entry of entries) {
+      // On utilise la fonction standard pour bien nettoyer les tags et discounts
       await deleteMetaobjectEntry(admin, entry.id);
     }
 
-    // 3. Supprimer la structure (Définition)
+    // 3. Supprimer la structure
     if (definitionId) {
       console.log(`🗑 Suppression Définition : ${definitionId}`);
       const mutation = `mutation metaobjectDefinitionDelete($id: ID!) { metaobjectDefinitionDelete(id: $id) { userErrors { field message } } }`;
@@ -202,14 +251,13 @@ export async function destroyMetaobjectStructure(admin: AdminApiContext) {
       const dDel = await rDel.json() as any;
       
       if (dDel.data?.metaobjectDefinitionDelete?.userErrors?.length > 0) {
-          // Si erreur "n'existe pas", on considère que c'est un succès
           console.warn("Info Delete Def:", dDel.data.metaobjectDefinitionDelete.userErrors);
       }
-      return { success: true };
     } else {
-      console.log("⚠️ Aucune définition trouvée à supprimer.");
-      return { success: true }; // On dit success car le but est atteint (plus de structure)
+        console.log("⚠️ Aucune définition trouvée à supprimer.");
     }
+
+    return { success: true };
 
   } catch (error) {
     console.error("❌ CRASH DESTROY:", error);

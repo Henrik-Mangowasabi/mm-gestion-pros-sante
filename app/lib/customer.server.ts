@@ -157,17 +157,28 @@ export async function removeCustomerProTag(admin: AdminApiContext, idOrEmail: st
 }
 
 export async function updateCustomerEmailInShopify(admin: AdminApiContext, customerId: string, newEmail: string, newName?: string) {
-    const input: any = { id: customerId, email: newEmail };
-    if (newName) {
-        const p = newName.split(" ");
-        input.firstName = p[0];
-        input.lastName = p.slice(1).join(" ") || p[0];
-    }
-    const m = `mutation customerUpdate($input: CustomerInput!) { customerUpdate(input: $input) { userErrors { field message } } }`;
-    try {
-        const r = await admin.graphql(m, { variables: { input } });
-        const d = await r.json() as any;
-        if (d.data?.customerUpdate?.userErrors?.length > 0) return { success: false, error: d.data.customerUpdate.userErrors[0].message };
-        return { success: true };
-    } catch (e) { return { success: false, error: String(e) }; }
+  // Nettoyage
+  const email = cleanEmail(newEmail);
+  
+  const input: any = { id: customerId, email: email };
+  if (newName) {
+      const p = newName.split(" ");
+      input.firstName = p[0];
+      input.lastName = p.slice(1).join(" ") || p[0];
+  }
+
+  const m = `mutation customerUpdate($input: CustomerInput!) { customerUpdate(input: $input) { userErrors { field message } } }`;
+  
+  try {
+      const r = await admin.graphql(m, { variables: { input } });
+      const d = await r.json() as any;
+      
+      if (d.data?.customerUpdate?.userErrors?.length > 0) {
+          console.error("Erreur Update Customer:", d.data.customerUpdate.userErrors);
+          return { success: false, error: d.data.customerUpdate.userErrors[0].message };
+      }
+      return { success: true };
+  } catch (e) { 
+      return { success: false, error: String(e) }; 
+  }
 }

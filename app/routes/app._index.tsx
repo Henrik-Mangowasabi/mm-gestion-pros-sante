@@ -10,7 +10,7 @@ import {
   createMetaobjectEntry,
   updateMetaobjectEntry,
   deleteMetaobjectEntry,
-  destroyMetaobjectStructure // <--- Import de la fonction nucléaire
+  destroyMetaobjectStructure
 } from "../lib/metaobject.server";
 
 // --- LOADER ---
@@ -18,7 +18,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   const status = await checkMetaobjectStatus(admin);
   
-  // 1. On définit le type (j'ai ajouté tags?: string[])
   let entries: Array<{
     id: string;
     identification?: string;
@@ -27,23 +26,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     code?: string;
     montant?: number;
     type?: string;
-    customer_id?: string; // Ajouté car visible dans tes logs
-    tags?: string[];      // <--- LE CHAMP MANQUANT
+    customer_id?: string;
+    tags?: string[];
   }> = [];
   
   if (status.exists) {
-    // 2. On récupère les entrées brutes
     const entriesResult = await getMetaobjectEntries(admin);
     const rawEntries = entriesResult.entries;
 
-    // 3. MAGIE : On va chercher les tags pour chaque entrée qui a un customer_id
     entries = await Promise.all(rawEntries.map(async (entry: any) => {
-        // Si pas de client lié, on renvoie l'entrée telle quelle avec tags vide
         if (!entry.customer_id) {
             return { ...entry, tags: [] };
         }
-
-        // Sinon, on demande à Shopify les tags de ce client spécifique
         try {
             const response = await admin.graphql(
                 `#graphql
@@ -54,15 +48,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
                 }`,
                 { variables: { id: entry.customer_id } }
             );
-
             const { data } = await response.json();
-            
-            // On retourne l'entrée fusionnée avec les tags trouvés
-            return { 
-                ...entry, 
-                tags: data?.customer?.tags || [] 
-            };
-
+            return { ...entry, tags: data?.customer?.tags || [] };
         } catch (error) {
             console.error("Erreur récup tags pour", entry.name, error);
             return { ...entry, tags: [] };
@@ -83,26 +70,23 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (actionType === "destroy_structure") {
     const result = await destroyMetaobjectStructure(admin);
     if (result.success) {
-       // On attend un peu que Shopify propage la suppression
        await new Promise(resolve => setTimeout(resolve, 2000));
-       // Redirection avec message spécifique
        return redirect("/app?success=structure_deleted"); 
     }
     return { error: result.error || "Erreur suppression totale" };
   }
 
-  // 1. Create structure
+  // 1. Création de la structure
   if (actionType === "create_structure") {
     const result = await createMetaobject(admin);
     if (result.success) {
       await new Promise(resolve => setTimeout(resolve, 2000));
-      // Redirection avec message spécifique
       return redirect("/app?success=structure_created");
     }
-    return { error: result.error || "Structure error" };
+    return { error: result.error || "Erreur création structure" };
   }
 
-  // 2. Create entry
+  // 2. Création d'une entrée (Ajout Pro)
   if (actionType === "create_entry") {
     let identification = (formData.get("identification") as string)?.trim() || "";
     const name = (formData.get("name") as string)?.trim() || "";
@@ -117,14 +101,15 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const result = await createMetaobjectEntry(admin, { identification, name, email, code, montant, type });
 
     if (result.success) {
+      // Astuce pour recharger la page proprement sans renvoyer le formulaire si on refresh
       const url = new URL(request.url);
       url.searchParams.set("success", "entry_created");
       return redirect(url.pathname + url.search);
     }
-    return { error: result.error || "Creation error" };
+    return { error: result.error || "Erreur création entrée" };
   }
 
-  // 3. Update entry
+  // 3. Mise à jour d'une entrée
   if (actionType === "update_entry") {
     const id = formData.get("id") as string;
     const identification = (formData.get("identification") as string)?.trim() || "";
@@ -134,8 +119,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const montantStr = (formData.get("montant") as string)?.trim() || "";
     const type = (formData.get("type") as string)?.trim() || "";
 
-    if (!id) return { error: "Missing ID" };
+    if (!id) return { error: "ID manquant" };
     
+    // C'est ici que la magie opère : on envoie les nouvelles données au backend
+    // Le backend (metaobject.server.ts) se chargera de comparer et mettre à jour Shopify (Client/Discount)
     const result = await updateMetaobjectEntry(admin, id, {
       identification, name, email, code, montant: parseFloat(montantStr), type
     });
@@ -145,10 +132,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       url.searchParams.set("success", "entry_updated");
       return redirect(url.pathname + url.search);
     }
-    return { error: result.error || "Update error" };
+    return { error: result.error || "Erreur mise à jour" };
   }
 
-  // 4. Delete entry
+  // 4. Suppression d'une entrée
   if (actionType === "delete_entry") {
     const id = formData.get("id") as string;
     const result = await deleteMetaobjectEntry(admin, id);
@@ -158,27 +145,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       url.searchParams.set("success", "entry_deleted");
       return redirect(url.pathname + url.search);
     }
-    return { error: result.error || "Deletion error" };
+    return { error: result.error || "Erreur suppression" };
   }
 
-  return { error: "Unknown action" };
+  return { error: "Action inconnue" };
 };
 
-// --- STYLES ---
+// --- STYLES (En attendant le CSS stylé !) ---
 const styles = {
-  cell: { padding: "10px 8px", fontSize: "0.9rem", verticalAlign: "middle" },
+  cell: { padding: "12px 10px", fontSize: "0.9rem", verticalAlign: "middle", borderBottom: "1px solid #eee" },
   input: { 
-    width: "100%", padding: "6px 8px", 
+    width: "100%", padding: "8px 10px", 
     border: "1px solid #ccc", borderRadius: "4px", fontSize: "0.9rem",
-    boxSizing: "border-box" as const 
+    boxSizing: "border-box" as const,
+    transition: "border-color 0.2s"
   },
   btnAction: {
-    padding: "6px", borderRadius: "4px", border: "none", cursor: "pointer", 
-    display: "flex", alignItems: "center", justifyContent: "center", width: "32px", height: "32px"
+    padding: "0", borderRadius: "4px", border: "none", cursor: "pointer", 
+    display: "flex", alignItems: "center", justifyContent: "center", width: "32px", height: "32px",
+    fontSize: "1.1rem"
   }
 };
 
-// --- ROW COMPONENT ---
+// --- COMPOSANT LIGNE (ROW) ---
 function EntryRow({ entry, index }: { entry: any; index: number }) {
   const [isEditing, setIsEditing] = React.useState(false);
   const [searchParams] = useSearchParams();
@@ -194,21 +183,14 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
   });
 
   const [formData, setFormData] = React.useState(getInitialFormData);
-  const previousEntryId = React.useRef(entry.id);
-
+  
+  // Réinitialiser le formulaire si on change de ligne ou si l'update a réussi
   React.useEffect(() => {
     if (searchParams.get("success") === "entry_updated") setIsEditing(false);
   }, [searchParams]);
 
-  React.useEffect(() => {
-    if (previousEntryId.current !== entry.id) {
-      previousEntryId.current = entry.id;
-      setFormData(getInitialFormData());
-      setIsEditing(false);
-    }
-  }, [entry.id]);
-
   const handleSave = () => {
+    // On envoie tout au serveur
     submit({
       action: "update_entry", id: entry.id, ...formData
     }, { method: "post" });
@@ -224,9 +206,11 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
     if (e.key === "Enter") { e.preventDefault(); handleSave(); }
   };
 
+  const rowStyle = { backgroundColor: index % 2 === 0 ? "white" : "#f9fafb" };
+
   return (
-    <tr style={{ borderBottom: "1px solid #eee", backgroundColor: index % 2 === 0 ? "white" : "#fcfcfc" }}>
-      <td style={{ ...styles.cell, color: "#888", fontSize: "0.8rem", width: "80px" }}>
+    <tr style={rowStyle}>
+      <td style={{ ...styles.cell, color: "#666", fontSize: "0.8rem", width: "80px" }}>
         {entry.id.split("/").pop()?.slice(-8)}
       </td>
       
@@ -236,33 +220,33 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
           <td style={styles.cell}><input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
           <td style={styles.cell}><input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
           <td style={styles.cell}><input type="text" value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
-          <td style={{...styles.cell, width: "80px"}}><input type="number" step="0.01" value={formData.montant} onChange={e => setFormData({...formData, montant: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
-          <td style={{...styles.cell, width: "70px"}}>
+          <td style={{...styles.cell, width: "100px"}}><input type="number" step="0.01" value={formData.montant} onChange={e => setFormData({...formData, montant: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
+          <td style={{...styles.cell, width: "80px"}}>
             <select value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} onKeyDown={handleKeyDown} style={styles.input}>
-              <option value="">-</option><option value="%">%</option><option value="€">€</option>
+              <option value="%">%</option><option value="€">€</option>
             </select>
           </td>
-          <td style={{...styles.cell, width: "90px"}}>
-            <div style={{ display: "flex", gap: "4px" }}>
-              <button type="button" onClick={handleSave} style={{...styles.btnAction, backgroundColor: "#008060", color: "white"}} title="Save">✓</button>
-              <button type="button" onClick={handleCancel} style={{...styles.btnAction, backgroundColor: "#e2e2e2", color: "#333"}} title="Cancel">✕</button>
+          <td style={{...styles.cell, width: "100px"}}>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button type="button" onClick={handleSave} style={{...styles.btnAction, backgroundColor: "#008060", color: "white"}} title="Enregistrer">✓</button>
+              <button type="button" onClick={handleCancel} style={{...styles.btnAction, backgroundColor: "#f4f4f4", color: "#333", border: "1px solid #ddd"}} title="Annuler">✕</button>
             </div>
           </td>
         </>
       ) : (
         <>
           <td style={styles.cell}>{entry.identification}</td>
-          <td style={{...styles.cell, fontWeight: "500"}}>{entry.name}</td>
+          <td style={{...styles.cell, fontWeight: "600", color: "#333"}}>{entry.name}</td>
           <td style={styles.cell}>{entry.email}</td>
-          <td style={styles.cell}><span style={{background:"#f1f8f5", color:"#008060", padding:"2px 6px", borderRadius:"4px", fontFamily:"monospace"}}>{entry.code}</span></td>
+          <td style={styles.cell}><span style={{background:"#e3f1df", color:"#008060", padding:"4px 8px", borderRadius:"4px", fontFamily:"monospace", fontWeight: "bold"}}>{entry.code}</span></td>
           <td style={styles.cell}>{entry.montant}</td>
           <td style={styles.cell}>{entry.type}</td>
           <td style={styles.cell}>
-            <div style={{ display: "flex", gap: "4px" }}>
-              <button type="button" onClick={() => setIsEditing(true)} style={{...styles.btnAction, backgroundColor: "#008060", color: "white"}} title="Edit">✎</button>
-              <Form method="post" onSubmit={e => !confirm("Voulez-vous vraiment supprimer cette entrée ?") && e.preventDefault()}>
+            <div style={{ display: "flex", gap: "6px" }}>
+              <button type="button" onClick={() => setIsEditing(true)} style={{...styles.btnAction, backgroundColor: "white", border: "1px solid #ccc", color: "#555"}} title="Modifier">✎</button>
+              <Form method="post" onSubmit={e => !confirm("Voulez-vous vraiment supprimer ce Pro ? \n\nCela supprimera aussi :\n- Le code promo associé\n- Le tag 'pro_sante' sur le client") && e.preventDefault()}>
                 <input type="hidden" name="action" value="delete_entry" /><input type="hidden" name="id" value={entry.id} />
-                <button type="submit" style={{...styles.btnAction, backgroundColor: "#d82c0d", color: "white"}} title="Delete">🗑</button>
+                <button type="submit" style={{...styles.btnAction, backgroundColor: "#fff0f0", border: "1px solid #fcc", color: "#d82c0d"}} title="Supprimer">🗑</button>
               </Form>
             </div>
           </td>
@@ -272,64 +256,58 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
   );
 }
 
+// --- FORMULAIRE NOUVELLE ENTRÉE ---
 function NewEntryForm() {
   const [formData, setFormData] = React.useState({ identification: "", name: "", email: "", code: "", montant: "", type: "" });
   const submit = useSubmit();
   const [searchParams] = useSearchParams();
 
-  // Reset form on success
+  // Reset après création
   React.useEffect(() => {
     if (searchParams.get("success") === "entry_created") {
       setFormData({ identification: "", name: "", email: "", code: "", montant: "", type: "" });
-      const nameInput = document.querySelector('input[name="name"]') as HTMLInputElement;
-      if (nameInput) nameInput.focus();
     }
   }, [searchParams]);
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
-    submit({
-        action: "create_entry",
-        ...formData
-    }, { method: "post" });
+    submit({ action: "create_entry", ...formData }, { method: "post" });
   }
 
   return (
-    <tr style={{ backgroundColor: "#f0f8ff", borderBottom: "2px solid #ddd" }}>
-      <td style={{...styles.cell, color: "#008060", fontWeight: "bold"}}>New</td>
+    <tr style={{ backgroundColor: "#f0f8ff", borderBottom: "2px solid #cce5ff" }}>
+      <td style={{...styles.cell, color: "#005bd3", fontWeight: "bold", borderLeft: "4px solid #005bd3"}}>Nouveau</td>
       <td style={styles.cell}><input type="text" name="identification" placeholder="Auto" value={formData.identification} onChange={e => setFormData({...formData, identification: e.target.value})} style={styles.input} /></td>
-      <td style={styles.cell}><input type="text" name="name" placeholder="Name *" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}><input type="text" name="name" placeholder="Nom *" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={styles.input} /></td>
       <td style={styles.cell}><input type="email" name="email" placeholder="Email *" required value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} style={styles.input} /></td>
       <td style={styles.cell}><input type="text" name="code" placeholder="Code *" required value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} style={styles.input} /></td>
-      <td style={styles.cell}><input type="number" step="0.01" name="montant" placeholder="Amount *" required value={formData.montant} onChange={e => setFormData({...formData, montant: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}><input type="number" step="0.01" name="montant" placeholder="Valeur *" required value={formData.montant} onChange={e => setFormData({...formData, montant: e.target.value})} style={styles.input} /></td>
       <td style={styles.cell}>
         <select name="type" required value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})} style={styles.input}>
           <option value="">Type</option><option value="%">%</option><option value="€">€</option>
         </select>
       </td>
       <td style={styles.cell}>
-        <button type="button" onClick={handleAdd} style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", width: "100%" }}>Add</button>
+        <button type="button" onClick={handleAdd} style={{ padding: "8px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", width: "100%" }}>Ajouter</button>
       </td>
     </tr>
   );
 }
 
-// --- MAIN PAGE ---
+// --- PAGE PRINCIPALE ---
 export default function Index() {
   const { status, entries } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const [searchParams, setSearchParams] = useSearchParams();
   const successType = searchParams.get("success");
 
-  console.log("🚨 CONTENU EXACT DE ENTRIES :", entries);
-
-  // LOGIQUE DES MESSAGES
+  // Messages de succès
   let successMessage = "";
-  if (successType === "entry_created") successMessage = "Entrée créée avec succès";
-  else if (successType === "entry_updated") successMessage = "Entrée mise à jour";
-  else if (successType === "entry_deleted") successMessage = "Entrée supprimée";
-  else if (successType === "structure_created") successMessage = "Création réussite du métaobject";
-  else if (successType === "structure_deleted") successMessage = "Suppression réussite du métaobject";
+  if (successType === "entry_created") successMessage = "Nouveau Pro ajouté & Code promo créé !";
+  else if (successType === "entry_updated") successMessage = "Informations mises à jour (et synchronisées) !";
+  else if (successType === "entry_deleted") successMessage = "Pro supprimé et nettoyé avec succès.";
+  else if (successType === "structure_created") successMessage = "Application initialisée avec succès.";
+  else if (successType === "structure_deleted") successMessage = "Tout a été effacé (Reset complet).";
 
   const [showSuccess, setShowSuccess] = React.useState(!!successType);
 
@@ -340,60 +318,47 @@ export default function Index() {
         searchParams.delete("success");
         setSearchParams(searchParams, { replace: true });
         setShowSuccess(false);
-      }, 4000);
+      }, 5000);
       return () => clearTimeout(timer);
     }
   }, [successType, searchParams, setSearchParams]);
 
-  const bannerStyle = { padding: "10px 20px", marginBottom: "20px", borderRadius: "6px", maxWidth: "1200px", margin: "0 auto 20px", textAlign: "center" as const, fontWeight: "600", boxShadow: "0 1px 3px rgba(0,0,0,0.1)" };
+  const bannerStyle = { padding: "12px 20px", marginBottom: "20px", borderRadius: "8px", maxWidth: "1200px", margin: "0 auto 20px", textAlign: "center" as const, fontWeight: "600", boxShadow: "0 2px 5px rgba(0,0,0,0.1)" };
 
   return (
     <div style={{ 
-      width: "100%", 
-      minHeight: "100vh", 
-      padding: "20px", 
-      backgroundColor: "#f6f6f7", 
-      fontFamily: "-apple-system, BlinkMacSystemFont, 'San Francisco', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif",
-      boxSizing: "border-box"
+      width: "100%", minHeight: "100vh", padding: "30px", 
+      backgroundColor: "#f6f6f7", fontFamily: "-apple-system, sans-serif"
     }}>
-      <h1 style={{ color: "#202223", marginBottom: "20px", textAlign: "center", fontSize: "1.5rem", fontWeight: "600" }}>Pro Health Management</h1>
+      <h1 style={{ color: "#202223", marginBottom: "30px", textAlign: "center", fontSize: "1.8rem", fontWeight: "700" }}>
+        Gestion des Pros de Santé
+      </h1>
       
-      {/* ZONE DANGER DEV */}
-      {status.exists && (
-        <div style={{ marginBottom: "20px", padding: "10px", border: "2px dashed red", borderRadius: "8px", backgroundColor: "#fff5f5", display: "flex", justifyContent: "space-between", alignItems: "center", maxWidth: "1200px", margin: "0 auto 20px" }}>
-          <span style={{ color: "#c00", fontWeight: "bold" }}>🔧 ZONE DÉVELOPPEUR</span>
-          <Form method="post" onSubmit={(e) => !confirm("ATTENTION : Cela va supprimer TOUTES les entrées, TOUS les codes promos associés, retirer TOUS les tags clients et supprimer la structure. Continuer ?") && e.preventDefault()}>
-            <input type="hidden" name="action" value="destroy_structure" />
-            <button type="submit" style={{ backgroundColor: "#d82c0d", color: "white", border: "none", padding: "8px 16px", borderRadius: "4px", cursor: "pointer", fontWeight: "bold" }}>
-              ☢️ SUPPRESSION TOTALE (RESET)
-            </button>
-          </Form>
-        </div>
-      )}
-      {/* FIN ZONE DANGER */}
-      
+      {/* Messages d'alerte */}
       {showSuccess && <div style={{ ...bannerStyle, backgroundColor: "#008060", color: "white" }}>✓ {successMessage}</div>}
-      {actionData?.error && <div style={{ ...bannerStyle, backgroundColor: "#fee", color: "#d82c0d", border: "1px solid #fcc" }}>⚠️ {actionData.error}</div>}
+      {actionData?.error && <div style={{ ...bannerStyle, backgroundColor: "#fff5f5", color: "#d82c0d", border: "1px solid #fcc" }}>⚠️ {actionData.error}</div>}
       
       {status.exists ? (
         <div style={{ maxWidth: "1200px", margin: "0 auto" }}>
-          <div style={{ backgroundColor: "white", borderRadius: "8px", boxShadow: "0 2px 4px rgba(0,0,0,0.05)", overflow: "hidden" }}>
-            <div style={{ padding: "16px 20px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <h2 style={{ margin: 0, color: "#333", fontSize: "1.1rem" }}>Entry List ({entries.length})</h2>
+          
+          {/* Tableau */}
+          <div style={{ backgroundColor: "white", borderRadius: "12px", boxShadow: "0 4px 12px rgba(0,0,0,0.05)", overflow: "hidden" }}>
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between", alignItems: "center", backgroundColor: "#fafafa" }}>
+              <h2 style={{ margin: 0, color: "#444", fontSize: "1.1rem", fontWeight: "600" }}>Liste des Partenaires ({entries.length})</h2>
             </div>
             
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "800px" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "900px" }}>
                 <thead>
-                  <tr style={{ backgroundColor: "#fafafa", borderBottom: "2px solid #eee" }}>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555", width: "80px" }}>ID</th>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555" }}>Identification</th>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555" }}>Name</th>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555" }}>Email</th>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555" }}>Code</th>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555", width: "80px" }}>Amount</th>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555", width: "70px" }}>Type</th>
-                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.85rem", color: "#555", width: "90px" }}>Actions</th>
+                  <tr style={{ backgroundColor: "white", borderBottom: "2px solid #eee" }}>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.8rem", textTransform: "uppercase", color: "#888", width: "80px" }}>ID</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.8rem", textTransform: "uppercase", color: "#888" }}>Ref Interne</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.8rem", textTransform: "uppercase", color: "#888" }}>Nom</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.8rem", textTransform: "uppercase", color: "#888" }}>Email</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.8rem", textTransform: "uppercase", color: "#888" }}>Code Promo</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.8rem", textTransform: "uppercase", color: "#888", width: "100px" }}>Montant</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.8rem", textTransform: "uppercase", color: "#888", width: "80px" }}>Type</th>
+                    <th style={{ padding: "12px", textAlign: "left", fontSize: "0.8rem", textTransform: "uppercase", color: "#888", width: "100px" }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -403,10 +368,36 @@ export default function Index() {
               </table>
             </div>
           </div>
+
+          {/* ZONE DANGER (Déplacée en bas pour sécurité) */}
+          <div style={{ marginTop: "60px", padding: "20px", borderTop: "1px solid #eee", textAlign: "center" }}>
+             <details>
+               <summary style={{ cursor: "pointer", color: "#666", fontSize: "0.9rem" }}>Afficher les options développeur (Zone Danger)</summary>
+               <div style={{ marginTop: "15px", padding: "15px", border: "1px dashed #d82c0d", borderRadius: "8px", backgroundColor: "#fff5f5", display: "inline-block" }}>
+                 <p style={{ color: "#d82c0d", fontWeight: "bold", fontSize: "0.9rem", margin: "0 0 10px 0" }}>⚠️ ATTENTION : SUPPRESSION TOTALE DE L'APPLICATION</p>
+                 <Form method="post" onSubmit={(e) => !confirm("ATTENTION ULTIME : \n\nVous allez supprimer :\n1. Tous les Pro de santé enregistrés\n2. Tous les codes promo liés\n3. Retirer le tag de tous les clients\n4. Détruire la définition du Métaobjet\n\nÊtes-vous sûr ?") && e.preventDefault()}>
+                   <input type="hidden" name="action" value="destroy_structure" />
+                   <button type="submit" style={{ backgroundColor: "#d82c0d", color: "white", border: "none", padding: "8px 16px", borderRadius: "4px", cursor: "pointer", fontWeight: "bold", fontSize: "0.85rem" }}>
+                     ☢️ TOUT SUPPRIMER & RÉINITIALISER
+                   </button>
+                 </Form>
+               </div>
+             </details>
+          </div>
+
         </div>
       ) : (
-        <div style={{ textAlign: "center", marginTop: "50px" }}>
-          <Form method="post"><input type="hidden" name="action" value="create_structure" /><button type="submit" style={{ padding: "10px 20px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "6px", cursor: "pointer" }}>Create Structure</button></Form>
+        <div style={{ textAlign: "center", marginTop: "100px" }}>
+          <div style={{ backgroundColor: "white", padding: "40px", borderRadius: "16px", boxShadow: "0 4px 20px rgba(0,0,0,0.1)", maxWidth: "500px", margin: "0 auto" }}>
+             <h2 style={{ fontSize: "1.5rem", marginBottom: "15px" }}>Bienvenue !</h2>
+             <p style={{ color: "#666", marginBottom: "30px" }}>L'application n'est pas encore initialisée. Cliquez ci-dessous pour créer la structure de base dans Shopify.</p>
+             <Form method="post">
+                <input type="hidden" name="action" value="create_structure" />
+                <button type="submit" style={{ padding: "12px 24px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "1rem", fontWeight: "600" }}>
+                   🚀 Initialiser l'application
+                </button>
+             </Form>
+          </div>
         </div>
       )}
     </div>
