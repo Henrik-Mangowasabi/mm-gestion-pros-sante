@@ -5,48 +5,65 @@ import { getMetaobjectEntries } from "../lib/metaobject.server";
 
 export const loader = async ({ request }: any) => {
   const { admin } = await authenticate.admin(request);
-  
+
   // 1. On récupère les entrées de ton Métaobjet (tes Pros)
   const metaEntriesResult = await getMetaobjectEntries(admin);
   const metaEntries = metaEntriesResult.entries || [];
 
-  console.log("🚨 1. Entrées Métaobjets trouvées :", metaEntries.length);
+  // 2. RÉCUPÉRATION DE TOUS LES CLIENTS (BOUCLE DE PAGINATION)
+  let allCustomers: any[] = [];
+  let hasNextPage = true;
+  let cursor = null;
 
-  // 2. On récupère les 50 derniers clients (SANS FILTRE pour être sûr de tout avoir)
-  // On filtrera nous-même après, c'est plus fiable que le moteur de recherche Shopify
-  const response = await admin.graphql(
-    `#graphql
-    query {
-      customers(first: 50, reverse: true) {
-        edges {
-          node {
-            id
-            firstName
-            lastName
-            email
-            tags
-            amountSpent { amount currencyCode }
-            ordersCount
-            state
+  while (hasNextPage) {
+    const response = await admin.graphql(
+      `#graphql
+      query getAllCustomers($cursor: String) {
+        customers(first: 250, after: $cursor) {
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+          edges {
+            node {
+              id
+              firstName
+              lastName
+              email
+              tags
+              amountSpent { amount currencyCode }
+              ordersCount
+              state
+            }
           }
         }
-      }
-    }`
-  );
+      }`,
+      { variables: { cursor } }
+    );
 
-  const responseJson = await response.json();
-  const allCustomers = responseJson.data.customers.edges.map((edge: any) => edge.node);
+    const data = await response.json();
+    const { edges, pageInfo } = data.data.customers;
 
-  console.log("🚨 2. Total clients récupérés (brut) :", allCustomers.length);
+    // On ajoute les clients de cette page à notre liste globale
+    const nodes = edges.map((edge: any) => edge.node);
+    allCustomers = allCustomers.concat(nodes);
 
-  // 3. On filtre NOUS-MÊME en Javascript (plus fiable que l'API de recherche)
+    // On prépare la page suivante
+    cursor = pageInfo.endCursor;
+    hasNextPage = pageInfo.hasNextPage;
+  }
+
+  console.log("🚨 TOTAL CLIENTS RÉCUPÉRÉS :", allCustomers.length);
+
+  // 3. FILTRE JAVASCRIPT (Fiable à 100%)
+  // On ne garde que ceux qui ont le tag 'pro_sante'
   const proSanteCustomers = allCustomers.filter((c: any) => 
     c.tags && c.tags.includes('pro_sante')
   );
 
-  console.log("🚨 3. Clients après filtre 'pro_sante' :", proSanteCustomers.length);
+  console.log("🚨 CLIENTS AVEC TAG 'pro_sante' :", proSanteCustomers.length);
 
-  // 4. On fait le lien entre les deux
+  // 4. On fait le lien avec les données des Pros
   const combinedData = proSanteCustomers.map((customer: any) => {
     const linkedEntry = metaEntries.find((e: any) => 
       e.customer_id === customer.id || 
