@@ -11,7 +11,7 @@ function cleanEmail(email: string) {
 function splitName(fullName: string) {
   const parts = fullName.trim().split(" ");
   const firstName = parts[0];
-  const lastName = parts.slice(1).join(" ") || firstName; // Si pas de nom de famille, on répète le prénom pour éviter l'erreur
+  const lastName = parts.slice(1).join(" ") || firstName; 
   return { firstName, lastName };
 }
 
@@ -120,9 +120,13 @@ export async function removeCustomerProTag(admin: AdminApiContext, idOrEmail: st
 }
 
 export async function updateCustomerEmailInShopify(admin: AdminApiContext, customerId: string, newEmail: string, newName?: string) {
-  const email = cleanEmail(newEmail);
+  // Nettoyage
+  const email = newEmail ? newEmail.trim().toLowerCase() : "";
   
-  const input: any = { id: customerId, email: email };
+  const input: any = { id: customerId };
+  if (email) input.email = email; // On met l'email seulement s'il est fourni
+
+  // --- FIX SYNCHRO NOM ---
   if (newName) {
       const { firstName, lastName } = splitName(newName);
       input.firstName = firstName;
@@ -132,6 +136,7 @@ export async function updateCustomerEmailInShopify(admin: AdminApiContext, custo
   const m = `mutation customerUpdate($input: CustomerInput!) { customerUpdate(input: $input) { userErrors { field message } } }`;
   
   try {
+      console.log(`👤 Update Customer ${customerId} ->`, input); // Log pour debugger
       const r = await admin.graphql(m, { variables: { input } });
       const d = await r.json() as any;
       
