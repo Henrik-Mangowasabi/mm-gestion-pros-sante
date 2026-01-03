@@ -1,8 +1,8 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
 
 client_id = "9c06db28bf813f3544da0f65f034e905"
-name = "App - Moon Moon - Gestion Pros de Santé"
-application_url = "https://example.com"
+name = "App - Moon Moon - Gestion Pros"
+application_url = "https://mm-gestion-pros-sante.onrender.com"
 embedded = true
 
 [build]
@@ -26,4 +26,4 @@ scopes = "read_customers,write_customers,read_discounts,write_discounts,write_me
 
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://mm-gestion-pros-sante.onrender.com/api/auth/callback" ]
