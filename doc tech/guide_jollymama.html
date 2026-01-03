@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <title>Documentation Technique - Gestion Pros Jollymama</title>
+    <style>
+        :root {
+            --primary: #008060; /* Vert Shopify */
+            --secondary: #005bd3; /* Bleu Admin */
+            --danger: #d82c0d;
+            --light: #f6f6f7;
+            --border: #e1e3e5;
+            --text: #202223;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: var(--text);
+            line-height: 1.6;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px;
+            background: white;
+        }
+        /* Header */
+        header {
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 20px;
+            margin-bottom: 40px;
+        }
+        h1 { margin: 0; color: var(--text); font-size: 28px; }
+        .subtitle { color: #6d7175; font-size: 16px; margin-top: 5px; }
+        .tag {
+            background: #e3f1df; color: var(--primary); 
+            padding: 2px 8px; border-radius: 4px; 
+            font-size: 12px; font-weight: bold; text-transform: uppercase;
+            border: 1px solid #b7eb8f;
+        }
+
+        /* Sections */
+        /* MODIFICATION ICI : On autorise la coupure des sections */
+        section { margin-bottom: 40px; }
+        
+        h2 { 
+            color: var(--secondary); 
+            font-size: 20px; 
+            border-left: 4px solid var(--secondary); 
+            padding-left: 10px; margin-bottom: 15px; 
+            /* On évite juste qu'un titre se retrouve tout seul en bas de page */
+            page-break-after: avoid; 
+        }
+        h3 { font-size: 16px; font-weight: 700; margin-top: 20px; color: #444; }
+
+        /* Listes & Logique */
+        ul { padding-left: 20px; }
+        li { margin-bottom: 8px; }
+        
+        .logic-step {
+            background: var(--light);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 15px;
+            margin-top: 10px;
+            /* On garde l'interdiction de coupure uniquement pour les petits blocs gris */
+            page-break-inside: avoid; 
+        }
+        .logic-step strong { color: var(--primary); }
+
+        /* Badges techniques */
+        code {
+            background: #f0f0f0;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: monospace;
+            color: #d63384;
+            font-size: 0.9em;
+        }
+        .badge-pro { background: #e4e5e7; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-family: monospace; }
+
+        /* Footer */
+        footer {
+            margin-top: 50px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            font-size: 12px;
+            color: #8c9196;
+        }
+
+        @media print {
+            body { padding: 0; max-width: 100%; }
+            /* Optimisation saut de page */
+            h2 { margin-top: 30px; }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <h1>📘 Documentation Technique & Fonctionnelle</h1>
+    <div class="subtitle">Application : <strong>App MM - Gestion Pros - JM</strong></div>
+    <div style="margin-top:10px;">
+        <span class="tag">Version 2.0</span>
+        <span class="tag" style="color:#005bd3; background:#f0f8ff; border-color:#b8d0eb;">Production</span>
+        <span class="tag" style="color:#5c5f62; background:#f6f6f7; border-color:#d2d5d8;">Hébergement : Render</span>
+    </div>
+</header>
+
+<section>
+    <h2>1. Infrastructure & Concept Global</h2>
+    <p>L'application est une <strong>Shopify App Custom</strong> hébergée sur des serveurs externes (Render). Elle agit comme un "chef d'orchestre" entre l'administrateur Jollymama et les API Shopify (Clients, Réductions, Commandes).</p>
+    <div class="logic-step">
+        <strong>Objectif :</strong> Automatiser la gestion des pro et leur rémunération via un système de "Store Credit" natif.
+    </div>
+</section>
+
+<section>
+    <h2>2. Cycle de Vie des Données (Logique Automatisée)</h2>
+    <p>Voici le comportement exact du système pour chaque action effectuée dans le Back-office.</p>
+
+    <h3>🔹 A. Initialisation (Installation)</h3>
+    <ul>
+        <li>L'application scanne la boutique pour voir si la structure existe.</li>
+        <li>Si absente, elle crée la définition de <code>Métaobjet</code> avec tous les champs requis (Ref, Nom, Email, Code, Montant, Compteurs CA...).</li>
+    </ul>
+
+    <h3>🔹 B. Création d'un Partenaire (Onglet Gestion Pros)</h3>
+    <div class="logic-step">
+        Lorsqu'on clique sur "Ajouter" :
+        <ol>
+            <li><strong>Base de données :</strong> Création de l'entrée dans l'app.</li>
+            <li><strong>Code Promo :</strong> Appel API pour créer le code de réduction (ex: <code>HENRIK5</code>) dans Shopify.</li>
+            <li><strong>Liaison Client (Smart Sync) :</strong>
+                <ul>
+                    <li>L'app cherche si l'email existe déjà dans Shopify.</li>
+                    <li><em>Si OUI :</em> Elle ajoute le tag <span class="badge-pro">pro_sante</span> et met à jour le nom (Format : "Prénom NOM").</li>
+                    <li><em>Si NON :</em> Elle crée un nouveau client et ajoute le tag <span class="badge-pro">pro_sante</span>.</li>
+                </ul>
+            </li>
+            <li><strong>Finalisation :</strong> L'ID unique du client Shopify est stocké dans l'app pour maintenir le lien à vie.</li>
+        </ol>
+    </div>
+
+    <h3>🔹 C. Modification d'un Partenaire</h3>
+    <ul>
+        <li><strong>Données :</strong> Mise à jour des champs dans le Métaobjet.</li>
+        <li><strong>Code Promo :</strong> Si le code ou le montant change (ex: 5% → 10%), la réduction Shopify est mise à jour instantanément.</li>
+        <li><strong>Client :</strong> Si l'email ou le nom change, la fiche client Shopify est automatiquement corrigée.</li>
+    </ul>
+
+    <h3>🔹 D. Suppression d'un Partenaire</h3>
+    <div class="logic-step" style="border-left: 4px solid var(--danger);">
+        <strong>Action de nettoyage stricte :</strong>
+        <ul>
+            <li>Suppression du <strong>Code Promo</strong> dans Shopify (il ne fonctionne plus).</li>
+            <li>Suppression de l'entrée dans l'application.</li>
+            <li><strong>Nettoyage Client :</strong> L'app retire le tag <span class="badge-pro">pro_sante</span> du client Shopify.</li>
+            <li><em>Note :</em> Le client n'est PAS supprimé (pour conserver l'historique des commandes), il redevient un client classique.</li>
+        </ul>
+    </div>
+
+    <h3>🔹 E. Activation / Désactivation</h3>
+    <ul>
+        <li>Modifie le statut du Code Promo dans Shopify (Actif / Expiré).</li>
+        <li>Le partenaire reste visible dans l'app, mais son code ne fonctionne plus au checkout.</li>
+    </ul>
+
+    <h3>🔹 F. Suppression Totale (Zone Danger)</h3>
+    <ul>
+        <li>Supprime la structure du Métaobjet.</li>
+        <li>Avant de supprimer, l'app boucle sur toutes les entrées pour nettoyer les codes promos et les tags clients associés.</li>
+    </ul>
+</section>
+
+<section>
+    <h2>3. Système de Rémunération Automatique</h2>
+    <p>Le "Cerveau financier" de l'application fonctionne via des <strong>Webhooks</strong> (écouteurs d'événements) en temps réel.</p>
+
+    <div class="logic-step">
+        <strong>💰 La Règle Mathématique :</strong><br>
+        10,00 € de Crédit Boutique offerts tous les 500,00 € de CA généré.
+    </div>
+
+    <h3>Le Processus (Invisible et Automatique) :</h3>
+    <ol>
+        <li>Un client passe une commande sur le site.</li>
+        <li>L'app détecte l'utilisation d'un <strong>Code Promo Pro</strong>.</li>
+        <li>Elle calcule le nouveau <strong>CA Total cumulé</strong> du partenaire.</li>
+        <li>Elle vérifie si un nouveau palier de 500€ est franchi.</li>
+        <li><strong>Action Bancaire :</strong> Si un gain est détecté (ex: +10€), l'app effectue un virement API direct sur le compte <code>Store Credit</code> du client.</li>
+    </ol>
+</section>
+
+<section>
+    <h2>4. Guide des Interfaces</h2>
+
+    <h3>🏥 Onglet 1 : Gestion Pros de Santé</h3>
+    <p>Interface principale CRUD (Create, Read, Update, Delete).</p>
+    <ul>
+        <li>Permet de gérer la base de données.</li>
+        <li>Assure la synchronisation des emails et noms.</li>
+    </ul>
+
+    <h3>🏷️ Onglet 2 : Gestion Codes Promo</h3>
+    <p>Vue simplifiée axée sur les réductions.</p>
+    <ul>
+        <li>Voir la liste des codes techniques.</li>
+        <li>Activer/Désactiver un code en un clic.</li>
+    </ul>
+
+    <h3>👥 Onglet 3 : Gestion Clients Pros (Reporting)</h3>
+    <p>Tableau de bord de performance (Lecture Seule).</p>
+    <ul>
+        <li>Affiche uniquement les clients ayant le tag <span class="badge-pro">pro_sante</span>.</li>
+        <li><strong>Colonnes Calculées :</strong>
+            <ul>
+                <li><em>Commandes :</em> Nombre d'utilisations.</li>
+                <li><em>CA Généré :</em> Chiffre d'affaires total apporté.</li>
+                <li><em>Gagné / Utilisé / Restant :</em> État du crédit boutique en temps réel.</li>
+            </ul>
+        </li>
+    </ul>
+</section>
+
+<footer>
+    Document généré le 03/01/2026<br>
+    Développement & Maintenance : <strong>Moon Moon</strong>
+</footer>
+
+</body>
+</html>
