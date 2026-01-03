@@ -22,9 +22,9 @@ export default function App() {
       <PolarisAppProvider i18n={{}}>
         {/* Note: s-app-nav semble être un composant personnalisé ou web component */}
         <s-app-nav>
-          <s-link href="/app">Gestion des Pros Santé</s-link>
-          <s-link href="/app/codes_promo">Codes Promo</s-link>
-          <s-link href="/app/clients">Mes Clients Pros</s-link>
+          <s-link href="/app">Gestion Pros de Santé</s-link>
+          <s-link href="/app/codes_promo">Gestion Codes Promo</s-link>
+          <s-link href="/app/clients">Gestion Clients Pros</s-link>
         </s-app-nav>
         <Outlet />
       </PolarisAppProvider>
