@@ -407,7 +407,7 @@ export default function Index() {
               <span>🏷️</span> Gestion Codes Promo →
             </Link>
             <Link to="/app/clients" className="nav-btn" style={styles.navButton}>
-              <span>👥</span> Gestion Clients →
+              <span>👥</span> Gestion Clients Pros →
             </Link>
           </div>
 

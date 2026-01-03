@@ -110,7 +110,7 @@ export default function CodesPromoPage() {
 
       <div style={{ display: "flex", justifyContent: "center", gap: "15px", marginBottom: "20px" }}>
         <Link to="/app" className="nav-btn" style={styles.navButton}><span>🏥</span> Gestion Pros de Santé →</Link>
-        <Link to="/app/clients" className="nav-btn" style={styles.navButton}><span>👥</span> Gestion Clients →</Link>
+        <Link to="/app/clients" className="nav-btn" style={styles.navButton}><span>👥</span> Gestion Clients Pros →</Link>
       </div>
 
       <div style={{ maxWidth: containerMaxWidth, margin: "0 auto" }}>

@@ -1,5 +1,5 @@
 {
-  "name": "mm-gestion-pros-sante",
+  "name": "App - Moon Moon - Gestion Pros de Santé",
   "private": true,
   "scripts": {
     "build": "react-router build",
