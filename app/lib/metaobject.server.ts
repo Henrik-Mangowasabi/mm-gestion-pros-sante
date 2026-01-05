@@ -44,7 +44,8 @@ export async function createMetaobject(admin: AdminApiContext) {
     { name: "Customer ID", key: "customer_id", type: "single_line_text_field", required: false },
     // --- AJOUTS POUR PERFORMANCE ---
     { name: "Cache Revenue", key: "cache_revenue", type: "number_decimal", required: false },
-    { name: "Cache Orders Count", key: "cache_orders_count", type: "number_integer", required: false }
+    { name: "Cache Orders Count", key: "cache_orders_count", type: "number_integer", required: false },
+    { name: "Cache Credit Earned", key: "cache_credit_earned", type: "number_decimal", required: false }
   ];
 
   const variables = { definition: { name: METAOBJECT_NAME, type: METAOBJECT_TYPE, fieldDefinitions, capabilities: { publishable: { enabled: true } } } };
@@ -135,7 +136,8 @@ export async function createMetaobjectEntry(admin: AdminApiContext, fields: any)
       { key: "customer_id", value: customerIdToSave },
       // Initialisation des compteurs à 0
       { key: "cache_revenue", value: "0" }, 
-      { key: "cache_orders_count", value: "0" }
+      { key: "cache_orders_count", value: "0" },
+      { key: "cache_credit_earned", value: "0" }
     ];
 
     const mutation = `mutation metaobjectCreate($metaobject: MetaobjectCreateInput!) { metaobjectCreate(metaobject: $metaobject) { metaobject { id }, userErrors { field message } } }`;
