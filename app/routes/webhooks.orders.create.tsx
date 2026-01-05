@@ -1,6 +1,6 @@
-// FICHIER : app/routes/webhooks.orders.create.tsx
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 // Loader pour gérer les requêtes GET (tests de connectivité)
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -19,12 +19,17 @@ export const loader = async (_args: LoaderFunctionArgs) => {
 export const action = async ({ request }: ActionFunctionArgs) => {
   // Log IMMÉDIAT pour voir si la route est appelée
   console.log(`🚨 ===== WEBHOOK ORDERS/CREATE APPELÉ =====`);
-  console.log(`🚨 Méthode: ${request.method}`);
-  console.log(`🚨 URL: ${request.url}`);
-  console.log(`🚨 Headers:`, Object.fromEntries(request.headers.entries()));
   
   try {
     const { admin, payload, shop, session, topic } = await authenticate.webhook(request);
+
+    // Charger la configuration pour cette boutique
+    let config = await prisma.config.findUnique({ where: { shop } });
+    if (!config) {
+      console.warn(`⚠️ Config non trouvée pour ${shop}, utilisation des valeurs par défaut.`);
+      config = { threshold: 500.0, creditAmount: 10.0 } as any;
+    }
+    console.log(`⚙️ Config utilisée - Seuil: ${config.threshold}€, Crédit: ${config.creditAmount}€`);
     
     console.log(`📥 Webhook reçu - Shop: ${shop}, Topic: ${topic}, Session: ${session ? "Oui" : "Non"}, Admin: ${admin ? "Oui" : "Non"}`);
     
@@ -227,70 +232,92 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     console.log(`💰 Montant de la commande (sous-total AVANT réduction): ${orderAmount}€`);
     console.log(`ℹ️ Note: Le sous-total avant réduction (${orderAmount}€) est utilisé pour calculer le CA généré.`);
 
-    // Requête corrigée : récupérer tous les metaobjects et filtrer côté code
-    const queryAllMetaobjects = `#graphql
-      query getAllPros {
-        metaobjects(first: 250, type: "mm_pro_de_sante") {
-          edges {
-            node {
-              id
-              fields {
-                key
-                value
+      // 0. Initialisation des variables
+      let metaobjectNode: any = null;
+      let customerIdValue: string | null = null;
+      const usedCodeLower = usedCode.toLowerCase().trim();
+
+      // 1. RECHERCHE RAPIDE (Indexée)
+      console.log(`🔍 Recherche indexée pour le code: ${usedCodeLower}`);
+      const querySearchMetaobject = `#graphql
+        query searchPro($query: String!) {
+          metaobjects(first: 10, type: "mm_pro_de_sante", query: $query) {
+            edges {
+              node {
+                id
+                fields { key value }
               }
             }
           }
         }
-      }
-    `;
+      `;
 
-    try {
-      const response = await adminContext.graphql(queryAllMetaobjects);
-      const data = await response.json() as any;
-      
-      if (data.errors) {
-        console.error("❌ Erreur GraphQL:", data.errors);
-        return new Response();
-      }
-
-      const allMetaobjects = data.data?.metaobjects?.edges || [];
-      console.log(`📊 Nombre total de metaobjects trouvés: ${allMetaobjects.length}`);
-
-      // Chercher le metaobject avec le code correspondant (comparaison insensible à la casse)
-      let metaobjectNode: any = null;
-      let customerIdValue: string | null = null;
-      const usedCodeUpper = usedCode.toUpperCase().trim();
-
-      console.log(`🔍 Recherche du code promo (normalisé): "${usedCodeUpper}"`);
-      console.log(`📋 Codes disponibles dans les metaobjects:`);
-      
-      for (const edge of allMetaobjects) {
-        const node = edge.node;
-        const codeField = node.fields.find((f: any) => f.key === "code");
-        if (codeField) {
-          const metaCodeUpper = (codeField.value || "").toUpperCase().trim();
-          console.log(`  - "${codeField.value}" (normalisé: "${metaCodeUpper}")`);
-          if (metaCodeUpper === usedCodeUpper) {
-            metaobjectNode = node;
-            const customerIdField = node.fields.find((f: any) => f.key === "customer_id");
-            customerIdValue = customerIdField?.value || null;
-            console.log(`✅ Metaobject trouvé pour le code ${usedCode} (match: ${codeField.value}): ${node.id}`);
+      try {
+        const response = await adminContext.graphql(querySearchMetaobject, {
+          variables: { query: usedCodeLower }
+        });
+        const data = await response.json() as any;
+        const foundMetaobjects = data.data?.metaobjects?.edges || [];
+        
+        for (const edge of foundMetaobjects) {
+          const codeField = edge.node.fields.find((f: any) => f.key === "code");
+          if (codeField?.value?.toLowerCase() === usedCodeLower) {
+            metaobjectNode = edge.node;
             break;
           }
         }
-      }
 
-      if (!metaobjectNode) {
-        console.warn(`⚠️ Aucun metaobject trouvé pour le code promo: ${usedCode}`);
-        console.warn(`⚠️ Codes disponibles:`);
-        allMetaobjects.forEach((edge: any) => {
-          const codeField = edge.node.fields.find((f: any) => f.key === "code");
-          if (codeField) {
-            console.warn(`  - "${codeField.value}"`);
+        // 2. RECHERCHE EXHAUSTIVE (Pagination si le Pro n'est pas trouvé)
+        // Utile si l'indexation Shopify est en retard ou si le nombre de Pros est important
+        if (!metaobjectNode) {
+          console.log("⚠️ Pro non trouvé via index. Lancement de la recherche exhaustive (pagination)...");
+          let hasNextPage = true;
+          let cursor: string | null = null;
+          let totalChecked = 0;
+
+          while (hasNextPage && !metaobjectNode && totalChecked < 1000) { // On limite à 1000 par sécurité
+            const listQuery = `#graphql
+              query listAll($cursor: String) {
+                metaobjects(first: 250, type: "mm_pro_de_sante", after: $cursor) {
+                  edges {
+                    node { h: id fields { k: key v: value } }
+                  }
+                  pageInfo { hasNextPage endCursor }
+                }
+              }
+            `;
+            const rList = await adminContext.graphql(listQuery, { variables: { cursor } });
+            const dList = await rList.json() as any;
+            const edges = dList.data?.metaobjects?.edges || [];
+            
+            for (const edge of edges) {
+              totalChecked++;
+              const node = edge.node;
+              const codeF = node.fields.find((f: any) => f.k === "code");
+              if (codeF?.v?.toLowerCase() === usedCodeLower) {
+                // Reformattage pour correspondre à la structure attendue
+                metaobjectNode = {
+                  id: node.h,
+                  fields: node.fields.map((f: any) => ({ key: f.k, value: f.v }))
+                };
+                console.log(`✅ Pro trouvé via recherche exhaustive (${totalChecked} pros vérifiés) !`);
+                break;
+              }
+            }
+            hasNextPage = dList.data?.metaobjects?.pageInfo?.hasNextPage || false;
+            cursor = dList.data?.metaobjects?.pageInfo?.endCursor || null;
           }
-        });
-        return new Response("Aucun metaobject trouvé", { status: 200 });
-      }
+        }
+
+        if (metaobjectNode) {
+          const customerIdField = metaobjectNode.fields.find((f: any) => f.key === "customer_id");
+          customerIdValue = customerIdField?.value || null;
+        }
+
+        if (!metaobjectNode) {
+          console.warn(`❌ ÉCHEC FINAL : Impossible de trouver le Pro pour le code: ${usedCode}`);
+          return new Response("Pro non trouvé", { status: 200 });
+        }
 
       // 1. Récupération des compteurs actuels
       let currentRevenue = 0;
@@ -309,8 +336,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const newRevenue = currentRevenue + orderAmount;
       const newCount = currentCount + 1;
       
-      // Règle : 10€ tous les 20€ de CA (Total à vie) - MODIFIÉ POUR TESTS
-      const totalCreditShouldBe = Math.floor(newRevenue / 20) * 10;
+      // Règle dynamique depuis les réglages de l'app
+      const totalCreditShouldBe = Math.floor(newRevenue / config.threshold) * config.creditAmount;
 
       // 3. Calcul du montant à verser (Le Delta)
       const amountToDeposit = totalCreditShouldBe - previousCreditEarned;

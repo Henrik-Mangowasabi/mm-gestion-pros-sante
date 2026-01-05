@@ -1,7 +1,7 @@
 // FICHIER : app/lib/metaobject.server.ts
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { createShopifyDiscount, updateShopifyDiscount, deleteShopifyDiscount, toggleShopifyDiscount } from "./discount.server";
-import { ensureCustomerPro, removeCustomerProTag, updateCustomerEmailInShopify } from "./customer.server";
+import { ensureCustomerPro, removeCustomerProTag, updateCustomerInShopify } from "./customer.server";
 
 const METAOBJECT_TYPE = "mm_pro_de_sante";
 const METAOBJECT_NAME = "MM Pro de santé";
@@ -42,6 +42,8 @@ export async function createMetaobject(admin: AdminApiContext) {
     { name: "Discount ID", key: "discount_id", type: "single_line_text_field", required: false },
     { name: "Status", key: "status", type: "boolean", required: false },
     { name: "Customer ID", key: "customer_id", type: "single_line_text_field", required: false },
+    { name: "Profession", key: "profession", type: "single_line_text_field", required: false },
+    { name: "Adresse", key: "adresse", type: "single_line_text_field", required: false },
     // --- AJOUTS POUR PERFORMANCE ---
     { name: "Cache Revenue", key: "cache_revenue", type: "number_decimal", required: false },
     { name: "Cache Orders Count", key: "cache_orders_count", type: "number_integer", required: false },
@@ -116,8 +118,8 @@ export async function createMetaobjectEntry(admin: AdminApiContext, fields: any)
   discountIdCreated = discountResult.discountId || null;
 
   try {
-    // 2. GESTION CLIENT (Création ou Tag)
-    const clientResult = await ensureCustomerPro(admin, fields.email, fields.name);
+    // 2. GESTION CLIENT (Création ou Tag + Metafields)
+    const clientResult = await ensureCustomerPro(admin, fields.email, fields.name, fields.profession, fields.adresse);
     if (!clientResult.success) {
         throw new Error("Erreur Client Shopify: " + clientResult.error);
     }
@@ -134,6 +136,8 @@ export async function createMetaobjectEntry(admin: AdminApiContext, fields: any)
       { key: "discount_id", value: discountIdCreated || "" },
       { key: "status", value: "true" },
       { key: "customer_id", value: customerIdToSave },
+      { key: "profession", value: String(fields.profession || "") },
+      { key: "adresse", value: String(fields.adresse || "") },
       // Initialisation des compteurs à 0
       { key: "cache_revenue", value: "0" }, 
       { key: "cache_orders_count", value: "0" },
@@ -203,25 +207,39 @@ export async function updateMetaobjectEntry(admin: AdminApiContext, id: string, 
     }
   }
 
-  // 3. Mise à jour du Client Shopify (CORRECTION ICI)
-  // On met à jour si l'email change OU si le nom change
-  if (oldData.customer_id) {
-    const hasEmailChanged = fields.email && fields.email.trim().toLowerCase() !== (oldData.email || "").trim().toLowerCase();
-    const hasNameChanged = fields.name && fields.name !== oldData.name;
+    // 3. Mise à jour du Client Shopify
+    // On met à jour si l'un des champs synchronisés change
+    if (oldData.customer_id) {
+        const hasEmailChanged = fields.email && fields.email.trim().toLowerCase() !== (oldData.email || "").trim().toLowerCase();
+        const hasNameChanged = fields.name && fields.name !== oldData.name;
+        const hasProfessionChanged = fields.profession !== undefined && fields.profession !== oldData.profession;
+        const hasAdresseChanged = fields.adresse !== undefined && fields.adresse !== oldData.adresse;
 
-    if (hasEmailChanged || hasNameChanged) {
-        console.log(`👤 Changement infos client détecté (Nom ou Email). Mise à jour Shopify...`);
-        // On utilise l'email fourni ou l'ancien si pas changé
-        const emailToUse = fields.email || oldData.email;
-        const updateClientResult = await updateCustomerEmailInShopify(admin, oldData.customer_id, emailToUse, mergedName);
-        
-        if (updateClientResult.success) {
-            console.log("✅ Client Shopify mis à jour.");
-        } else {
-            console.error("❌ Echec update client:", updateClientResult.error);
+        if (hasEmailChanged || hasNameChanged || hasProfessionChanged || hasAdresseChanged) {
+            console.log(`👤 Changement infos client détecté (${[hasEmailChanged && 'Email', hasNameChanged && 'Nom', hasProfessionChanged && 'Profession', hasAdresseChanged && 'Adresse'].filter(Boolean).join(', ')}). Mise à jour Shopify...`);
+            
+            // On utilise l'email fourni ou l'ancien si pas changé
+            const emailToUse = fields.email || oldData.email;
+            const nameToUse = fields.name || oldData.name;
+            const professionToUse = fields.profession !== undefined ? fields.profession : oldData.profession;
+            const adresseToUse = fields.adresse !== undefined ? fields.adresse : oldData.adresse;
+
+            const updateClientResult = await updateCustomerInShopify(
+                admin, 
+                oldData.customer_id, 
+                hasEmailChanged ? emailToUse : undefined, 
+                hasNameChanged ? nameToUse : undefined, 
+                professionToUse, 
+                adresseToUse
+            );
+            
+            if (updateClientResult.success) {
+                console.log("✅ Client Shopify mis à jour (Infos + Adresse physique).");
+            } else {
+                console.error("❌ Echec update client:", updateClientResult.error);
+            }
         }
     }
-  }
 
   // 4. Mise à jour du Métaobjet
   const fieldsInput: any[] = [];
@@ -232,6 +250,8 @@ export async function updateMetaobjectEntry(admin: AdminApiContext, id: string, 
   if (fields.montant) fieldsInput.push({ key: "montant", value: String(fields.montant) });
   if (fields.type) fieldsInput.push({ key: "type", value: String(fields.type) });
   if (fields.status !== undefined) fieldsInput.push({ key: "status", value: String(fields.status) });
+  if (fields.profession !== undefined) fieldsInput.push({ key: "profession", value: String(fields.profession) });
+  if (fields.adresse !== undefined) fieldsInput.push({ key: "adresse", value: String(fields.adresse) });
 
   const mutation = `mutation metaobjectUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) { metaobjectUpdate(id: $id, metaobject: $metaobject) { userErrors { field message } } }`;
   

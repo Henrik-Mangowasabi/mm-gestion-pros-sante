@@ -1,20 +1,30 @@
-// FICHIER : app/routes/app.clients.tsx
+import type { LoaderFunctionArgs } from "react-router";
 import { useLoaderData, Link } from "react-router";
-import React, { useState } from "react";
+import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import { getMetaobjectEntries, checkMetaobjectStatus } from "../lib/metaobject.server";
+import prisma from "../db.server";
 
-export const loader = async ({ request }: any) => {
-  const { admin } = await authenticate.admin(request);
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop;
   
   const status = await checkMetaobjectStatus(admin);
-  if (!status.exists) return { clients: [], isInitialized: false };
+  if (!status.exists) return { clients: [] as any[], isInitialized: false, config: null };
+
+  // Charger la config
+  let config = await prisma.config.findUnique({ where: { shop } });
+  if (!config) {
+    config = await prisma.config.create({
+      data: { shop, threshold: 500.0, creditAmount: 10.0 }
+    });
+  }
 
   // SÉCURITÉ : On s'assure que entries est toujours un tableau
   const result = await getMetaobjectEntries(admin);
   const entries = result.entries || [];
 
-  if (entries.length === 0) return { clients: [], isInitialized: true };
+  if (entries.length === 0) return { clients: [] as any[], isInitialized: true, config };
 
   const customerIds = entries
     .map((e: any) => e.customer_id)
@@ -31,14 +41,22 @@ export const loader = async ({ request }: any) => {
             firstName
             lastName
             email
-            metafield(namespace: "custom", key: "credit_used") { value }
+            storeCreditAccounts(first: 1) {
+              edges {
+                node {
+                  balance {
+                    amount
+                  }
+                }
+              }
+            }
           }
         }
       }
     `;
     try {
         const response = await admin.graphql(query, { variables: { ids: customerIds } });
-        const data = await response.json();
+        const data: any = await response.json();
         const nodes = data.data?.nodes || [];
         nodes.forEach((n: any) => { if (n) customerMap.set(n.id, n); });
     } catch (e) { console.error("Erreur Bulk Customers", e); }
@@ -49,38 +67,52 @@ export const loader = async ({ request }: any) => {
       
       const totalRevenue = entry.cache_revenue ? parseFloat(entry.cache_revenue) : 0;
       const ordersCount = entry.cache_orders_count ? parseInt(entry.cache_orders_count) : 0;
-      const creditEarned = Math.floor(totalRevenue / 20) * 10; // MODIFIÉ POUR TESTS : 20€ au lieu de 500€
-      const creditUsed = shopifyCustomer?.metafield?.value ? parseFloat(shopifyCustomer.metafield.value) : 0;
-      const creditRemaining = creditEarned - creditUsed;
+      
+      // Utilisation de la CONFIG DYNAMIQUE
+      const currentThreshold = config?.threshold || 500.0;
+      const currentAmount = config?.creditAmount || 10.0;
+      const creditEarned = Math.floor(totalRevenue / currentThreshold) * currentAmount;
+      
+      // Récupération du solde REEL sur Shopify
+      const storeCreditAccount = shopifyCustomer?.storeCreditAccounts?.edges?.[0]?.node;
+      const currentBalance = storeCreditAccount?.balance?.amount ? parseFloat(storeCreditAccount.balance.amount) : 0;
+      
+      // Utilisé = Gagné - Ce qu'il reste sur le compte
+      const creditUsed = Math.max(0, creditEarned - currentBalance);
+      const creditRemaining = currentBalance;
 
       return {
           id: entry.customer_id || entry.id,
-          firstName: shopifyCustomer?.firstName || entry.name.split(" ")[0], // Fallback
-          lastName: shopifyCustomer?.lastName || entry.name.split(" ").slice(1).join(" "),
+          firstName: shopifyCustomer?.firstName || (entry.name ? entry.name.split(" ")[0] : "Inconnu"),
+          lastName: shopifyCustomer?.lastName || (entry.name ? entry.name.split(" ").slice(1).join(" ") : ""),
           email: shopifyCustomer?.email || entry.email,
           linkedCode: entry.code,
           ordersCount: ordersCount,
           totalRevenue: totalRevenue,
           creditEarned,
           creditUsed,
-          creditRemaining
+          creditRemaining,
+          profession: entry.profession || "-",
+          adresse: entry.adresse || "-"
       };
   });
 
-  return { clients: combinedData, isInitialized: true };
+  return { clients: combinedData, isInitialized: true, config };
 };
 
 // Helper ID
 const extractId = (gid: string) => gid ? gid.split("/").pop() : "";
 
 export default function ClientsPage() {
-  const { clients, isInitialized } = useLoaderData<typeof loader>();
+  const { clients, isInitialized, config } = useLoaderData<typeof loader>();
+  const [currentPage, setCurrentPage] = useState(1);
 
   if (!isInitialized) {
       return (
         <div style={{ width: "100%", height: "80vh", display: "flex", justifyContent: "center", alignItems: "center", backgroundColor: "#f6f6f7" }}>
             <div style={{ backgroundColor: "white", padding: "40px", borderRadius: "16px", boxShadow: "0 4px 20px rgba(0,0,0,0.1)", maxWidth: "500px", textAlign: "center" }}>
                 <h2 style={{ fontSize: "1.2rem", marginBottom: "15px", color: "#d82c0d" }}>Application non initialisée</h2>
+                <p style={{ color: "#666", marginBottom: "30px" }}>Veuillez vous rendre sur la page principale pour configurer l&apos;application.</p>
                 <Link to="/app" style={{ textDecoration: "none", padding: "12px 24px", backgroundColor: "#008060", color: "white", borderRadius: "8px", fontWeight: "600" }}>Aller sur la page principale</Link>
             </div>
         </div>
@@ -89,8 +121,6 @@ export default function ClientsPage() {
 
   // SÉCURITÉ CLIENT : Empêcher le crash si clients est undefined
   const safeClients = clients || [];
-  
-  const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;
   const totalPages = Math.ceil(safeClients.length / itemsPerPage);
   const currentClients = safeClients.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -134,7 +164,6 @@ export default function ClientsPage() {
       <div style={{ display: "flex", justifyContent: "center", gap: "15px", marginBottom: "20px", flexWrap: "wrap" }}>
         <Link to="/app" className="nav-btn" style={styles.navButton}><span>🏥</span> Gestion Pros de Santé →</Link>
         <Link to="/app/codes_promo" className="nav-btn" style={styles.navButton}><span>🏷️</span> Gestion Codes Promo →</Link>
-        <Link to="/app/tutoriel" className="nav-btn" style={styles.navButton}><span>📘</span> Tutoriel →</Link>
         <Link to="/app/analytique" className="nav-btn" style={styles.navButton}><span>📊</span> Analytique →</Link>
       </div>
 
@@ -144,7 +173,7 @@ export default function ClientsPage() {
           <div style={{ padding: "0 20px 20px 20px", color: "#555", fontSize: "0.95rem", lineHeight: "1.5" }}>
             <p style={{marginTop: 0}}><strong>Comment est calculé le Store Credit ?</strong></p>
             <ul style={{ paddingLeft: "20px", margin: "10px 0" }}>
-                <li><strong>Règle :</strong> 10€ de crédit sont gagnés pour chaque tranche de 20€ de chiffre d&apos;affaires généré. (Seuil modifié pour les tests)</li>
+                <li><strong>Règle :</strong> {config?.creditAmount}€ de crédit sont gagnés pour chaque tranche de {config?.threshold}€ de chiffre d&apos;affaires généré.</li>
             </ul>
           </div>
         </details>
@@ -161,8 +190,9 @@ export default function ClientsPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1200px" }}>
               <thead>
                 <tr style={{ backgroundColor: "white", borderBottom: "2px solid #eee" }}>
-                  <th style={{...thStyle, width: "20%"}}>Nom Pro</th>
-                  <th style={{...thStyle, width: "20%"}}>Email</th>
+                  <th style={{...thStyle, width: "15%"}}>Nom Pro</th>
+                  <th style={{...thStyle, width: "15%"}}>Email</th>
+                  <th style={{...thStyle, width: "15%"}}>Profession / Adresse</th>
                   <th style={{...thCenter, width: "5%"}}>Lien</th>
                   <th style={{...thPromoStyle, width: "10%"}}>Code Promo</th>
                   <th style={{...thPerfStyle, width: "7.5%"}}>Com.</th>
@@ -194,9 +224,13 @@ export default function ClientsPage() {
                         <td style={{ ...styles.cell, backgroundColor: bgStd, color: "#666" }}>
                           {client.email}
                         </td>
+                        <td style={{ ...styles.cell, backgroundColor: bgStd }}>
+                          <div style={{ fontSize: "0.85rem", color: "#555", fontWeight: "600" }}>{client.profession}</div>
+                          <div style={{ fontSize: "0.75rem", color: "#888", marginTop: "2px" }}>{client.adresse}</div>
+                        </td>
                         <td style={{ ...styles.cellCenter, backgroundColor: bgStd }}>
                           {client.id && client.id.startsWith("gid://") ? (
-                             <a href={`shopify:admin/customers/${extractId(client.id)}`} target="_top" style={styles.adminBtn} title="Voir le client">↗</a>
+                             <a href={`shopify:admin/customers/${extractId(client.id)}`} target="_blank" rel="noopener noreferrer" style={styles.adminBtn} title="Voir le client">↗</a>
                           ) : ("-")}
                         </td>
 
@@ -218,7 +252,18 @@ export default function ClientsPage() {
                           {client.creditUsed > 0 ? `-${client.creditUsed} €` : "-"}
                         </td>
                         <td style={{ ...styles.cellCredit, backgroundColor: bgCredit }}>
-                          <span style={{ backgroundColor: client.creditRemaining > 0 ? "#9c6ade" : "#eee", color: client.creditRemaining > 0 ? "white" : "#999", padding: "4px 10px", borderRadius: "20px", fontWeight: "bold", fontSize: "0.85rem" }}>{client.creditRemaining} €</span>
+                          <span style={{ 
+                            backgroundColor: client.creditRemaining > 0 ? "#9c6ade" : "#eee", 
+                            color: client.creditRemaining > 0 ? "white" : "#999", 
+                            padding: "4px 12px", 
+                            borderRadius: "20px", 
+                            fontWeight: "bold", 
+                            fontSize: "0.85rem",
+                            whiteSpace: "nowrap",
+                            display: "inline-block"
+                          }}>
+                            {client.creditRemaining.toFixed(2)} €
+                          </span>
                         </td>
                       </tr>
                     );

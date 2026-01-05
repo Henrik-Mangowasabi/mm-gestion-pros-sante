@@ -1,67 +1,168 @@
-// FICHIER : app/routes/app.analytique.tsx
-import { useLoaderData, Link } from "react-router";
-import React, { useState } from "react";
+import type { LoaderFunctionArgs } from "react-router";
+import { useLoaderData, Link, Form } from "react-router";
+import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import { getMetaobjectEntries, checkMetaobjectStatus } from "../lib/metaobject.server";
+import prisma from "../db.server";
 
-export const loader = async ({ request }: any) => {
-  const { admin } = await authenticate.admin(request);
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const url = new URL(request.url);
+  const startDateStr = url.searchParams.get("startDate");
+  const endDateStr = url.searchParams.get("endDate");
   
   const status = await checkMetaobjectStatus(admin);
-  if (!status.exists) return { stats: null, ranking: [], isInitialized: false };
+  if (!status.exists) return { stats: null, ranking: [], isInitialized: false, config: null, filters: { startDate: "", endDate: "" } };
+
+  // Charger la config
+  let config = await prisma.config.findUnique({ where: { shop } });
+  if (!config) {
+    config = await prisma.config.create({
+      data: { shop, threshold: 500.0, creditAmount: 10.0 }
+    });
+  }
 
   const result = await getMetaobjectEntries(admin);
   const entries = result.entries || [];
 
-  // Calcul des statistiques globales
-  const totalOrders = entries.reduce((sum: number, entry: any) => {
-    const count = entry.cache_orders_count ? parseInt(entry.cache_orders_count) : 0;
-    return sum + count;
-  }, 0);
+  let stats = {
+    totalOrders: 0,
+    totalRevenue: 0,
+    activePros: entries.filter((entry: any) => entry.status !== false).length,
+    totalPros: entries.length,
+    isFiltered: !!(startDateStr || endDateStr)
+  };
 
-  const totalRevenue = entries.reduce((sum: number, entry: any) => {
-    const revenue = entry.cache_revenue ? parseFloat(entry.cache_revenue) : 0;
-    return sum + revenue;
-  }, 0);
+  let ranking: any[] = [];
 
-  const activePros = entries.filter((entry: any) => entry.status !== false).length;
-  const totalPros = entries.length;
+  if (stats.isFiltered) {
+    // LOGIQUE DE FILTRAGE PAR DATE (Appel Shopify avec Pagination)
+    const dateQueryParts = [];
+    if (startDateStr) dateQueryParts.push(`created_at:>=${startDateStr}`);
+    if (endDateStr) dateQueryParts.push(`created_at:<=${endDateStr}`);
+    // On ne cible que les commandes ayant un code promo pour économiser du quota
+    dateQueryParts.push(`discount_code:*`);
+    
+    const queryString = dateQueryParts.join(" AND ");
+    const proStats = new Map<string, { revenue: number, count: number }>();
+    
+    const query = `#graphql
+      query getOrdersByDate($queryString: String!, $cursor: String) {
+        orders(first: 250, query: $queryString, after: $cursor) {
+          edges {
+            node {
+              totalPriceSet {
+                shopMoney {
+                  amount
+                }
+              }
+              discountCodes
+            }
+          }
+          pageInfo {
+            hasNextPage
+            endCursor
+          }
+        }
+      }
+    `;
 
-  // Classement des pros par chiffre d'affaires généré
-  const ranking = entries
-    .map((entry: any) => ({
-      id: entry.id,
-      name: entry.name || "Sans nom",
-      code: entry.code || "-",
-      revenue: entry.cache_revenue ? parseFloat(entry.cache_revenue) : 0,
-      ordersCount: entry.cache_orders_count ? parseInt(entry.cache_orders_count) : 0,
-      email: entry.email || "-"
-    }))
-    .sort((a, b) => b.revenue - a.revenue);
+    try {
+        let hasNextPage = true;
+        let cursor = null;
+        let pagesLoaded = 0;
+        const maxPages = 4; // On limite à 1000 commandes (4x250) pour garder une page rapide
+
+        while (hasNextPage && pagesLoaded < maxPages) {
+            const response = await admin.graphql(query, { variables: { queryString, cursor } });
+            const data = await response.json();
+            const ordersEdges = data.data?.orders?.edges || [];
+            
+            ordersEdges.forEach((edge: any) => {
+                const order = edge.node;
+                const revenue = parseFloat(order.totalPriceSet.shopMoney.amount);
+                const codesUsed = order.discountCodes || [];
+                
+                codesUsed.forEach((code: string) => {
+                    const current = proStats.get(code) || { revenue: 0, count: 0 };
+                    proStats.set(code, { 
+                        revenue: current.revenue + revenue, 
+                        count: current.count + 1 
+                    });
+                    stats.totalRevenue += revenue;
+                    stats.totalOrders += 1;
+                });
+            });
+
+            const pageInfo = data.data?.orders?.pageInfo;
+            hasNextPage = pageInfo?.hasNextPage;
+            cursor = pageInfo?.endCursor;
+            pagesLoaded++;
+        }
+
+        ranking = entries
+            .map((entry: any) => {
+                const periodData = proStats.get(entry.code) || { revenue: 0, count: 0 };
+                return {
+                    id: entry.id,
+                    name: entry.name || "Sans nom",
+                    code: entry.code || "-",
+                    revenue: periodData.revenue,
+                    ordersCount: periodData.count,
+                    email: entry.email || "-"
+                };
+            })
+            .sort((a, b) => b.revenue - a.revenue);
+
+    } catch (e) {
+        console.error("Erreur filtrage analytique:", e);
+    }
+  } else {
+    // LOGIQUE PAR DÉFAUT (Utilise le cache cumulé du métaobjet)
+    stats.totalOrders = entries.reduce((sum: number, entry: any) => {
+        const count = entry.cache_orders_count ? parseInt(entry.cache_orders_count) : 0;
+        return sum + count;
+    }, 0);
+
+    stats.totalRevenue = entries.reduce((sum: number, entry: any) => {
+        const revenue = entry.cache_revenue ? parseFloat(entry.cache_revenue) : 0;
+        return sum + revenue;
+    }, 0);
+
+    ranking = entries
+        .map((entry: any) => ({
+            id: entry.id,
+            name: entry.name || "Sans nom",
+            code: entry.code || "-",
+            revenue: entry.cache_revenue ? parseFloat(entry.cache_revenue) : 0,
+            ordersCount: entry.cache_orders_count ? parseInt(entry.cache_orders_count) : 0,
+            email: entry.email || "-"
+        }))
+        .sort((a, b) => (b.revenue || 0) - (a.revenue || 0));
+  }
 
   return {
-    stats: {
-      totalOrders,
-      totalRevenue,
-      activePros,
-      totalPros
-    },
+    stats,
     ranking,
-    isInitialized: true
+    isInitialized: true,
+    filters: { startDate: startDateStr || "", endDate: endDateStr || "" }
   };
 };
 
-// Helper ID
-const extractId = (gid: string) => gid ? gid.split("/").pop() : "";
+// Helper ID - non utilisé pour le moment
+// const extractId = (gid: string) => gid ? gid.split("/").pop() : "";
 
 export default function AnalytiquePage() {
-  const { stats, ranking, isInitialized } = useLoaderData<typeof loader>();
+  const { stats, ranking, isInitialized, filters } = useLoaderData<typeof loader>();
+  const [currentPage, setCurrentPage] = useState(1);
 
   if (!isInitialized) {
     return (
       <div style={{ width: "100%", height: "80vh", display: "flex", justifyContent: "center", alignItems: "center", backgroundColor: "#f6f6f7" }}>
         <div style={{ backgroundColor: "white", padding: "40px", borderRadius: "16px", boxShadow: "0 4px 20px rgba(0,0,0,0.1)", maxWidth: "500px", textAlign: "center" }}>
           <h2 style={{ fontSize: "1.2rem", marginBottom: "15px", color: "#d82c0d" }}>Application non initialisée</h2>
+          <p style={{ color: "#666", marginBottom: "30px" }}>Veuillez vous rendre sur la page principale pour configurer l&apos;application.</p>
           <Link to="/app" style={{ textDecoration: "none", padding: "12px 24px", backgroundColor: "#008060", color: "white", borderRadius: "8px", fontWeight: "600" }}>
             Aller sur la page principale
           </Link>
@@ -70,7 +171,6 @@ export default function AnalytiquePage() {
     );
   }
 
-  const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;
   const totalPages = Math.ceil(ranking.length / itemsPerPage);
   const currentRanking = ranking.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -216,20 +316,77 @@ export default function AnalytiquePage() {
         <Link to="/app/clients" className="nav-btn" style={styles.navButton}>
           <span>👥</span> Gestion Clients Pros →
         </Link>
-        <Link to="/app/tutoriel" className="nav-btn" style={styles.navButton}>
-          <span>📘</span> Tutoriel →
-        </Link>
       </div>
 
       <div style={{ maxWidth: containerMaxWidth, margin: "0 auto" }}>
+        {/* Filtres par date */}
+        <div style={{ backgroundColor: "white", padding: "24px", borderRadius: "12px", boxShadow: "0 2px 8px rgba(0,0,0,0.05)", marginBottom: "30px", border: "1px solid #eee" }}>
+          <h3 style={{ margin: "0 0 20px 0", fontSize: "1rem", color: "#444" }}>📅 Filtrer par période</h3>
+          <Form method="get" style={{ display: "flex", flexWrap: "wrap", gap: "20px", alignItems: "flex-end" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label htmlFor="startDate" style={{ fontSize: "0.85rem", color: "#666", fontWeight: "600" }}>Du :</label>
+              <input 
+                id="startDate"
+                type="date" 
+                name="startDate" 
+                defaultValue={filters.startDate}
+                style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #ccc", outline: "none" }} 
+              />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+              <label htmlFor="endDate" style={{ fontSize: "0.85rem", color: "#666", fontWeight: "600" }}>Au :</label>
+              <input 
+                id="endDate"
+                type="date" 
+                name="endDate" 
+                defaultValue={filters.endDate}
+                style={{ padding: "8px 12px", borderRadius: "6px", border: "1px solid #ccc", outline: "none" }} 
+              />
+            </div>
+            <div style={{ display: "flex", gap: "10px" }}>
+                <button type="submit" style={{ 
+                    padding: "10px 24px", 
+                    backgroundColor: "#008060", 
+                    color: "white", 
+                    border: "none", 
+                    borderRadius: "6px", 
+                    fontWeight: "600", 
+                    cursor: "pointer",
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.1)"
+                }}>
+                    Filtrer
+                </button>
+                <Link to="/app/analytique" style={{ 
+                    padding: "10px 24px", 
+                    backgroundColor: "white", 
+                    color: "#666", 
+                    border: "1px solid #ccc", 
+                    borderRadius: "6px", 
+                    fontWeight: "600", 
+                    textDecoration: "none",
+                    fontSize: "0.9rem",
+                    display: "flex",
+                    alignItems: "center"
+                }}>
+                    Réinitialiser
+                </Link>
+            </div>
+          </Form>
+          {stats?.isFiltered && (
+            <div style={{ marginTop: "15px", padding: "10px", backgroundColor: "#f0f8ff", borderRadius: "6px", border: "1px solid #b8d0eb", color: "#005bd3", fontSize: "0.9rem" }}>
+                ✨ <strong>Mode Filtré :</strong> Les statistiques affichées correspondent uniquement à la période sélectionnée.
+            </div>
+          )}
+        </div>
+
         {/* Statistiques globales */}
         <div style={styles.statsGrid}>
           <div style={styles.statCard}>
-            <div style={styles.statLabel}>Nombre de commandes par affiliation</div>
+            <div style={styles.statLabel}>{stats?.isFiltered ? "Commandes sur la période" : "Nombre de commandes par affiliation"}</div>
             <h2 style={styles.statValue}>{stats?.totalOrders || 0}</h2>
           </div>
           <div style={{...styles.statCard, borderLeftColor: "#005bd3"}}>
-            <div style={styles.statLabel}>Somme totale des commandes</div>
+            <div style={styles.statLabel}>{stats?.isFiltered ? "Chiffre d'Affaires sur la période" : "Somme totale des commandes"}</div>
             <h2 style={styles.statValue}>{stats?.totalRevenue.toFixed(2) || "0.00"} €</h2>
           </div>
           <div style={{...styles.statCard, borderLeftColor: "#9c6ade"}}>

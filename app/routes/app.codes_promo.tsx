@@ -1,22 +1,21 @@
-// FICHIER : app/routes/app.codes_promo.tsx
 import { useLoaderData, Link, useFetcher } from "react-router";
-import type { ActionFunctionArgs } from "react-router";
-import React, { useState } from "react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { useState } from "react";
 import { authenticate } from "../shopify.server";
 import { getMetaobjectEntries, updateMetaobjectEntry, checkMetaobjectStatus } from "../lib/metaobject.server";
 
-export const loader = async ({ request }: any) => {
+export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin } = await authenticate.admin(request);
   
   // VÉRIFICATION INITIALISATION
   const status = await checkMetaobjectStatus(admin);
-  if (!status.exists) return { entries: [], isInitialized: false };
+  if (!status.exists) return { entries: [] as any[], isInitialized: false };
 
   const { entries } = await getMetaobjectEntries(admin);
 
   // --- LOGIQUE AJOUTÉE : RÉCUPÉRATION DES VRAIS NOMS CLIENTS ---
   // 1. Récupérer les ID clients liés
-  const customerIds = entries
+  const customerIds = (entries as any[])
     .map((e: any) => e.customer_id)
     .filter((id: string) => id && id.startsWith("gid://shopify/Customer/"));
 
@@ -37,12 +36,12 @@ export const loader = async ({ request }: any) => {
     `;
     try {
         const response = await admin.graphql(query, { variables: { ids: customerIds } });
-        const data = await response.json();
+        const data = await response.json() as any;
         const nodes = data.data?.nodes || [];
         nodes.forEach((node: any) => {
             if (node) {
                // On stocke "Prénom Nom"
-               nameMap.set(node.id, `${node.firstName} ${node.lastName}`);
+               nameMap.set(node.id, `${node.firstName || ""} ${node.lastName || ""}`.trim());
             }
         });
     } catch (e) {
@@ -51,7 +50,7 @@ export const loader = async ({ request }: any) => {
   }
 
   // 3. Remplacer le nom interne par le vrai nom client (si trouvé)
-  const enrichedEntries = entries.map((entry: any) => ({
+  const enrichedEntries = (entries as any[]).map((entry: any) => ({
       ...entry,
       // Si on a trouvé le client Shopify, on affiche son Prénom/Nom. 
       // Sinon on garde le nom interne du métaobjet (fallback).
@@ -77,7 +76,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   return null;
 };
 
-const Spinner = ({ color = "white", size = "14px" }) => (
+const Spinner = ({ color = "white", size = "14px" }: { color?: string; size?: string }) => (
   <div style={{
     width: size, height: size,
     border: `2px solid rgba(0,0,0,0.1)`,
@@ -96,14 +95,33 @@ const extractId = (gid: string) => gid ? gid.split("/").pop() : "";
 
 export default function CodesPromoPage() {
   const { entries, isInitialized } = useLoaderData<typeof loader>();
+  const fetcher = useFetcher();
+  const [currentPage, setCurrentPage] = useState(1);
   
+  // --- GESTION DU VERROU GLOBAL ---
+  const [isLocked, setIsLocked] = useState(true);
+  const [showPass, setShowPass] = useState(false);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const handleUnlock = () => {
+    if (password === "GestionPro") {
+      setIsLocked(false);
+      setShowPass(false);
+      setError("");
+    } else {
+      setError("Code incorrect");
+    }
+  };
+
+
   // SI NON INITIALISÉ
   if (!isInitialized) {
       return (
         <div style={{ width: "100%", height: "80vh", display: "flex", justifyContent: "center", alignItems: "center", backgroundColor: "#f6f6f7" }}>
             <div style={{ backgroundColor: "white", padding: "40px", borderRadius: "16px", boxShadow: "0 4px 20px rgba(0,0,0,0.1)", maxWidth: "500px", textAlign: "center" }}>
                 <h2 style={{ fontSize: "1.2rem", marginBottom: "15px", color: "#d82c0d" }}>Application non initialisée</h2>
-                <p style={{ color: "#666", marginBottom: "30px" }}>Veuillez vous rendre sur la page principale pour configurer l'application.</p>
+                <p style={{ color: "#666", marginBottom: "30px" }}>Veuillez vous rendre sur la page principale pour configurer l&apos;application.</p>
                 <Link to="/app" style={{ textDecoration: "none", padding: "12px 24px", backgroundColor: "#008060", color: "white", borderRadius: "8px", fontWeight: "600" }}>
                     Aller sur la page principale
                 </Link>
@@ -112,11 +130,9 @@ export default function CodesPromoPage() {
       );
   }
 
-  const fetcher = useFetcher();
-  const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 25;
   const totalPages = Math.ceil(entries.length / itemsPerPage);
-  const currentEntries = entries.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const currentEntries = (entries as any[]).slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
   const styles = {
     wrapper: { width: "100%", padding: "20px", backgroundColor: "#f6f6f7", fontFamily: "-apple-system, sans-serif", boxSizing: "border-box" as const },
@@ -146,24 +162,58 @@ export default function CodesPromoPage() {
   const thPromoBorder = { borderLeft: "2px solid #e1e3e5" };
   const thActionStyle = { ...thStyle, textAlign: "center" as const, borderLeft: "2px solid #eee" };
 
+
   return (
     <div style={styles.wrapper}>
       <style>{`.nav-btn:hover { background-color: #f1f8f5 !important; border-color: #008060 !important; box-shadow: 0 2px 4px rgba(0,0,0,0.1) !important; }`}</style>
 
-      <h1 style={{ color: "#202223", marginBottom: "20px", textAlign: "center", fontSize: "1.8rem", fontWeight: "700" }}>
-        Gestion des Codes Promo
-      </h1>
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "20px", marginBottom: "20px", position: "relative" }}>
+        <h1 style={{ color: "#202223", margin: 0, fontSize: "1.8rem", fontWeight: "700" }}>
+          Gestion des Codes Promo
+        </h1>
+
+        <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+          {isLocked && !showPass && (
+            <button type="button" onClick={() => setShowPass(true)} style={{ padding: "6px 12px", backgroundColor: "white", border: "1px solid #c9cccf", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem", fontWeight: "600", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+              🔒 Modifier
+            </button>
+          )}
+
+          {showPass && (
+            <div style={{ display: "flex", gap: "8px", alignItems: "center", backgroundColor: "white", padding: "4px 8px", borderRadius: "8px", border: "1px solid #c9cccf" }}>
+              <input 
+                type="password" 
+                autoFocus
+                placeholder="Code d'accès" 
+                value={password} 
+                onChange={e => setPassword(e.target.value)} 
+                onKeyDown={e => e.key === "Enter" && handleUnlock()}
+                style={{ width: "120px", padding: "4px 8px", border: "none", fontSize: "0.9rem", outline: "none" }} 
+              />
+              <button type="button" onClick={handleUnlock} style={{ padding: "4px 10px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", fontSize: "0.8rem", fontWeight: "600", cursor: "pointer" }}>
+                Valider
+              </button>
+              {error && <span style={{ color: "#d82c0d", fontSize: "0.75rem", fontWeight: "bold" }}>{error}</span>}
+            </div>
+          )}
+
+          {!isLocked && (
+            <button type="button" onClick={() => setIsLocked(true)} style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem", fontWeight: "600", display: "flex", alignItems: "center", gap: "5px" }}>
+              🔓 Mode édition activé (Clic pour verrouiller)
+            </button>
+          )}
+        </div>
+      </div>
 
       <div style={{ display: "flex", justifyContent: "center", gap: "15px", marginBottom: "20px", flexWrap: "wrap" }}>
         <Link to="/app" className="nav-btn" style={styles.navButton}><span>🏥</span> Gestion Pros de Santé →</Link>
         <Link to="/app/clients" className="nav-btn" style={styles.navButton}><span>👥</span> Gestion Clients Pros →</Link>
-        <Link to="/app/tutoriel" className="nav-btn" style={styles.navButton}><span>📘</span> Tutoriel →</Link>
         <Link to="/app/analytique" className="nav-btn" style={styles.navButton}><span>📊</span> Analytique →</Link>
       </div>
 
       <div style={{ maxWidth: containerMaxWidth, margin: "0 auto" }}>
         <details style={styles.infoDetails}>
-          <summary style={styles.infoSummary}>ℹ️ Guide d'activation (Cliquez pour dérouler)</summary>
+          <summary style={styles.infoSummary}>ℹ️ Guide d&apos;activation (Cliquez pour dérouler)</summary>
           <div style={{ padding: "0 20px 20px 20px", color: "#555", fontSize: "0.95rem", lineHeight: "1.5" }}>
             <p style={{marginTop: 0}}><strong>Contrôle des réductions :</strong></p>
             <ul style={{ paddingLeft: "20px", margin: "10px 0" }}>
@@ -185,8 +235,9 @@ export default function CodesPromoPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "1200px" }}>
               <thead>
                 <tr style={{ backgroundColor: "white", borderBottom: "2px solid #eee" }}>
-                  <th style={{...thStyle, width: "20%"}}>Nom Pro</th>
-                  <th style={{...thStyle, width: "25%"}}>Email</th>
+                  <th style={{...thStyle, width: "15%"}}>Nom Pro</th>
+                  <th style={{...thStyle, width: "15%"}}>Email</th>
+                  <th style={{...thStyle, width: "25%"}}>PROFESSION / ADRESSE</th>
                   
                   <th style={{...thStyle, ...thPromoBorder, backgroundColor: "#f1f8f5", color: "#008060", width: "15%"}}>Nom Code</th>
                   <th style={{...thPromoStyle, width: "15%"}}>Code Promo</th>
@@ -201,7 +252,7 @@ export default function CodesPromoPage() {
                 {/* ETAT VIDE (EMPTY STATE) */}
                 {currentEntries.length === 0 ? (
                   <tr>
-                    <td colSpan={8} style={{ padding: "30px", textAlign: "center", color: "#888", fontSize: "0.95rem" }}>
+                    <td colSpan={9} style={{ padding: "30px", textAlign: "center", color: "#888", fontSize: "0.95rem" }}>
                       Aucun code promo créé via la Gestion des Pros.
                     </td>
                   </tr>
@@ -222,6 +273,10 @@ export default function CodesPromoPage() {
                             {entry.displayName || entry.name}
                         </td>
                         <td style={{ ...styles.cell, backgroundColor: bgStandard, color: "#666" }}>{entry.email}</td>
+                        <td style={{ ...styles.cell, backgroundColor: bgStandard }}>
+                            <div style={{ fontWeight: "600", color: "#333", fontSize: "0.85rem" }}>{entry.profession || "-"}</div>
+                            <div style={{ fontSize: "0.75rem", color: "#888" }}>{entry.adresse || "-"}</div>
+                        </td>
                         
                         {/* Nom Code */}
                         <td style={{ ...styles.cell, backgroundColor: bgPromo, ...borderLeftSep, color: "#555", fontSize: "0.85rem", fontStyle: "italic" }}>
@@ -253,14 +308,16 @@ export default function CodesPromoPage() {
                                <input type="hidden" name="action" value="toggle_status" />
                                <input type="hidden" name="id" value={entry.id} />
                                <input type="hidden" name="new_status" value={(!isActive).toString()} />
-                               <button type="submit" disabled={isUpdatingThis} style={{
-                                   padding: "6px 10px", backgroundColor: isActive ? "white" : "#008060", color: isActive ? "#d82c0d" : "white",
-                                   border: isActive ? "1px solid #e0e0e0" : "none", borderRadius: "6px", cursor: isUpdatingThis ? "default" : "pointer",
+                               <button type="submit" disabled={isUpdatingThis || isLocked} style={{
+                                   padding: "6px 10px", backgroundColor: (isUpdatingThis || isLocked) ? "#f4f6f8" : (isActive ? "white" : "#008060"), 
+                                   color: isLocked ? "#ccc" : (isActive ? "#d82c0d" : "white"),
+                                   border: (isActive && !isLocked) ? "1px solid #e0e0e0" : "none", borderRadius: "6px", 
+                                   cursor: (isUpdatingThis || isLocked) ? "not-allowed" : "pointer",
                                    fontWeight: "600", fontSize: "0.8rem", transition: "all 0.2s",
-                                   boxShadow: isActive ? "0 1px 2px rgba(0,0,0,0.05)" : "0 1px 3px rgba(0,0,0,0.1)",
+                                   boxShadow: (isActive && !isLocked) ? "0 1px 2px rgba(0,0,0,0.05)" : "0 1px 3px rgba(0,0,0,0.1)",
                                    minWidth: "90px", display: "inline-flex", justifyContent: "center", alignItems: "center", gap: "6px"
                                  }}>
-                                 {isUpdatingThis ? <><Spinner color={isActive ? "#d82c0d" : "white"} /> ...</> : (isActive ? "Désactiver" : "Activer")}
+                                 {isUpdatingThis ? <><Spinner color={isActive ? "#d82c0d" : "white"} /> ...</> : (isLocked ? "🔒" : (isActive ? "Désactiver" : "Activer"))}
                                </button>
                              </fetcher.Form>
                            )}
@@ -268,7 +325,7 @@ export default function CodesPromoPage() {
 
                         <td style={{ ...styles.cellCenter, backgroundColor: bgStandard }}>
                           {entry.discount_id ? (
-                               <a href={`shopify:admin/discounts/${extractId(entry.discount_id)}`} target="_top" style={styles.adminBtn} title="Voir dans Shopify">↗</a>
+                               <a href={`shopify:admin/discounts/${extractId(entry.discount_id)}`} target="_blank" rel="noopener noreferrer" style={styles.adminBtn} title="Voir dans Shopify">↗</a>
                           ) : (<span style={{color: "#ccc"}}>-</span>)}
                         </td>
 

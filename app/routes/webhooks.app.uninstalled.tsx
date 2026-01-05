@@ -1,14 +1,15 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+  const { shop, topic } = await authenticate.webhook(request);
 
   console.log(`Received ${topic} webhook for ${shop}`);
 
-  // TODO: Implémenter la suppression des sessions quand la base de données sera configurée
-  if (session) {
-    console.log(`Would delete sessions for shop: ${shop}`);
+  if (shop) {
+    await prisma.session.deleteMany({ where: { shop } });
+    console.log(`Sessions deleted for shop: ${shop}`);
   }
 
   return new Response();

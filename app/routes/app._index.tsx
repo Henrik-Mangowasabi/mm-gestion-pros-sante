@@ -1,7 +1,6 @@
-// FICHIER : app/routes/app._index.tsx
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { useLoaderData, useActionData, Form, redirect, useSearchParams, useSubmit, useNavigation, Link } from "react-router"; 
-import React, { useState } from "react"; 
+import { useState, useEffect } from "react"; 
 import { authenticate } from "../shopify.server";
 import {
   checkMetaobjectStatus,
@@ -12,12 +11,26 @@ import {
   deleteMetaobjectEntry,
   destroyMetaobjectStructure
 } from "../lib/metaobject.server";
+import { createCustomerMetafieldDefinitions } from "../lib/customer.server";
+
+import prisma from "../db.server";
 
 // --- LOADER ---
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const status = await checkMetaobjectStatus(admin);
   
+  // Charger la config (seuil de crédit)
+  let config = await prisma.config.findUnique({
+    where: { shop: session.shop }
+  });
+
+  if (!config) {
+    config = await prisma.config.create({
+      data: { shop: session.shop, threshold: 500.0, creditAmount: 10.0 }
+    });
+  }
+
   let entries: Array<{
     id: string;
     identification?: string;
@@ -34,30 +47,46 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     const entriesResult = await getMetaobjectEntries(admin);
     const rawEntries = entriesResult.entries;
 
-    entries = await Promise.all(rawEntries.map(async (entry: any) => {
-        if (!entry.customer_id) {
-            return { ...entry, tags: [] };
-        }
-        try {
-            const response = await admin.graphql(
-                `#graphql
-                query getCustomerTags($id: ID!) {
-                    customer(id: $id) {
-                        tags
-                    }
-                }`,
-                { variables: { id: entry.customer_id } }
-            );
-            const { data } = await response.json();
-            return { ...entry, tags: data?.customer?.tags || [] };
-        } catch (error) {
-            console.error("Erreur récup tags pour", entry.name, error);
-            return { ...entry, tags: [] };
-        }
+    // OPTIMISATION : Requête groupée pour les tags
+    const customerIds = rawEntries
+      .map((e: any) => e.customer_id)
+      .filter((id: string) => id && id.startsWith("gid://shopify/Customer/"));
+
+    const tagsMap = new Map<string, string[]>();
+    
+    if (customerIds.length > 0) {
+      try {
+        const response = await admin.graphql(
+          `#graphql
+          query getCustomersTags($ids: [ID!]!) {
+            nodes(ids: $ids) {
+              ... on Customer {
+                id
+                tags
+              }
+            }
+          }`,
+          { variables: { ids: customerIds } }
+        );
+        const { data } = await response.json();
+        const nodes = data?.nodes || [];
+        nodes.forEach((node: any) => {
+          if (node && node.id) {
+            tagsMap.set(node.id, node.tags || []);
+          }
+        });
+      } catch (error) {
+        console.error("Erreur récup bulk tags", error);
+      }
+    }
+
+    entries = rawEntries.map((entry: any) => ({
+      ...entry,
+      tags: entry.customer_id ? (tagsMap.get(entry.customer_id) || []) : []
     }));
   }
   
-  return { status, entries };
+  return { status, entries, config };
 };
 
 // --- ACTION ---
@@ -76,8 +105,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 
   if (actionType === "create_structure") {
+    // 1. Structure Métaobjet
     const result = await createMetaobject(admin);
+    
+    // 2. Définition Médafields Clients (Profession + Adresse)
     if (result.success) {
+      await createCustomerMetafieldDefinitions(admin);
       await new Promise(resolve => setTimeout(resolve, 2000));
       return redirect("/app?success=structure_created");
     }
@@ -91,12 +124,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const code = (formData.get("code") as string)?.trim() || "";
     const montantStr = (formData.get("montant") as string)?.trim() || "";
     const type = (formData.get("type") as string)?.trim() || "";
+    const profession = (formData.get("profession") as string)?.trim() || "";
+    const adresse = (formData.get("adresse") as string)?.trim() || "";
 
     if (!identification) return { error: "La référence interne est obligatoire." };
 
     const montant = montantStr ? parseFloat(montantStr) : NaN;
 
-    const result = await createMetaobjectEntry(admin, { identification, name, email, code, montant, type });
+    const result = await createMetaobjectEntry(admin, { identification, name, email, code, montant, type, profession, adresse });
 
     if (result.success) {
       const url = new URL(request.url);
@@ -104,6 +139,19 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return redirect(url.pathname + url.search);
     }
     return { error: result.error || "Erreur création entrée" };
+  }
+
+  if (actionType === "update_config") {
+    const threshold = parseFloat(formData.get("threshold") as string);
+    const creditAmount = parseFloat(formData.get("creditAmount") as string);
+    const { session } = await authenticate.admin(request);
+
+    await prisma.config.upsert({
+      where: { shop: session.shop },
+      update: { threshold, creditAmount },
+      create: { shop: session.shop, threshold, creditAmount }
+    });
+    return { success: "config_updated" };
   }
 
   if (actionType === "update_entry") {
@@ -114,11 +162,13 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const code = (formData.get("code") as string)?.trim() || "";
     const montantStr = (formData.get("montant") as string)?.trim() || "";
     const type = (formData.get("type") as string)?.trim() || "";
+    const profession = (formData.get("profession") as string)?.trim() || "";
+    const adresse = (formData.get("adresse") as string)?.trim() || "";
 
     if (!id) return { error: "ID manquant" };
     
     const result = await updateMetaobjectEntry(admin, id, {
-      identification, name, email, code, montant: parseFloat(montantStr), type
+      identification, name, email, code, montant: parseFloat(montantStr), type, profession, adresse
     });
 
     if (result.success) {
@@ -145,7 +195,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 };
 
 // --- COMPOSANT SPINNER ---
-const Spinner = ({ color = "white", size = "16px" }) => (
+const Spinner = ({ color = "white", size = "16px" }: { color?: string; size?: string }) => (
   <div style={{
     width: size, height: size,
     border: `2px solid rgba(0,0,0,0.1)`,
@@ -178,8 +228,8 @@ const styles = {
 };
 
 // --- COMPOSANT LIGNE (ROW) ---
-function EntryRow({ entry, index }: { entry: any; index: number }) {
-  const [isEditing, setIsEditing] = React.useState(false);
+function EntryRow({ entry, index, isLocked }: { entry: any; index: number; isLocked: boolean }) {
+  const [isEditing, setIsEditing] = useState(false);
   const [searchParams] = useSearchParams();
   const submit = useSubmit();
   const nav = useNavigation(); 
@@ -195,11 +245,13 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
     code: entry.code || "",
     montant: entry.montant !== undefined ? String(entry.montant) : "",
     type: entry.type || "%",
+    profession: entry.profession || "",
+    adresse: entry.adresse || "",
   });
 
-  const [formData, setFormData] = React.useState(getInitialFormData);
+  const [formData, setFormData] = useState(getInitialFormData);
   
-  React.useEffect(() => {
+  useEffect(() => {
     if (searchParams.get("success") === "entry_updated") setIsEditing(false);
   }, [searchParams]);
 
@@ -232,6 +284,8 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
           <td style={{...styles.cell, backgroundColor: bgStandard}}><input disabled={isBusy} type="text" value={formData.identification} onChange={e => setFormData({...formData, identification: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} placeholder="ID" /></td>
           <td style={{...styles.cell, backgroundColor: bgStandard}}><input disabled={isBusy} type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
           <td style={{...styles.cell, backgroundColor: bgStandard}}><input disabled={isBusy} type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
+          <td style={{...styles.cell, backgroundColor: bgStandard}}><input disabled={isBusy} type="text" value={formData.profession} onChange={e => setFormData({...formData, profession: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} placeholder="Profession" /></td>
+          <td style={{...styles.cell, backgroundColor: bgStandard}}><input disabled={isBusy} type="text" value={formData.adresse} onChange={e => setFormData({...formData, adresse: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} placeholder="Adresse" /></td>
           
           <td style={{...styles.cellPromo, backgroundColor: bgPromo, ...borderLeftSep}}><input disabled={isBusy} type="text" value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
           <td style={{...styles.cellPromo, backgroundColor: bgPromo, width: "60px"}}><input disabled={isBusy} type="number" step="0.01" value={formData.montant} onChange={e => setFormData({...formData, montant: e.target.value})} onKeyDown={handleKeyDown} style={styles.input} /></td>
@@ -255,6 +309,8 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
           <td style={{...styles.cell, backgroundColor: bgStandard}}>{entry.identification}</td>
           <td style={{...styles.cell, backgroundColor: bgStandard, fontWeight: "600", color: "#333"}}>{entry.name}</td>
           <td style={{...styles.cell, backgroundColor: bgStandard}}>{entry.email}</td>
+          <td style={{...styles.cell, backgroundColor: bgStandard, fontSize: "0.85rem", color: "#666"}}>{entry.profession || "-"}</td>
+          <td style={{...styles.cell, backgroundColor: bgStandard, fontSize: "0.8rem", color: "#888"}}>{entry.adresse || "-"}</td>
           
           <td style={{...styles.cellPromo, backgroundColor: bgPromo, ...borderLeftSep}}><span style={{background:"#e3f1df", color:"#008060", padding:"4px 8px", borderRadius:"4px", fontFamily:"monospace", fontWeight: "bold"}}>{entry.code}</span></td>
           <td style={{...styles.cellPromo, backgroundColor: bgPromo}}>{entry.montant}</td>
@@ -262,22 +318,18 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
 
           <td style={{...styles.cellPromo, backgroundColor: bgStandard, ...borderLeftSep}}>
             <div style={{ display: "flex", gap: "6px", justifyContent: "center" }}>
-              <button type="button" disabled={isBusy} onClick={() => setIsEditing(true)} style={{...styles.btnAction, backgroundColor: "white", border: "1px solid #ccc", color: "#555"}} title="Modifier">
+              <button type="button" disabled={isBusy || isLocked} onClick={() => setIsEditing(true)} style={{...styles.btnAction, backgroundColor: isLocked ? "#f4f6f8" : "white", border: "1px solid #ccc", color: isLocked ? "#ccc" : "#555", cursor: isLocked ? "not-allowed" : "pointer"}} title={isLocked ? "Verrouillé" : "Modifier"}>
                  ✎
               </button>
               <Form method="post" onSubmit={(e) => {
-                  const confirm1 = confirm("ATTENTION ULTIME : \n\nVous allez supprimer :\n1. Tous les Pro de santé\n2. Tous les codes promo\n3. Retirer les tags clients\n4. Détruire la structure\n\nÊtes-vous sûr ?");
+                  if (isLocked) { e.preventDefault(); return; }
+                  const confirm1 = confirm("ATTENTION ULTIME : \n\nVous allez supprimer ce partenaire et son code promo.");
                   if (!confirm1) { e.preventDefault(); return; }
-                  
-                  // Deuxième sécurité : Obliger à taper un mot
                   const validation = prompt("Pour confirmer, tapez le mot 'DELETE' en majuscules ci-dessous :");
-                  if (validation !== "DELETE") {
-                      alert("Annulé : Code de confirmation incorrect.");
-                      e.preventDefault();
-                  }
+                  if (validation !== "DELETE") { e.preventDefault(); }
               }}>
                 <input type="hidden" name="action" value="delete_entry" /><input type="hidden" name="id" value={entry.id} />
-                <button type="submit" disabled={isBusy} style={{...styles.btnAction, backgroundColor: "#fff0f0", border: "1px solid #fcc", color: "#d82c0d"}} title="Supprimer">
+                <button type="submit" disabled={isBusy || isLocked} style={{...styles.btnAction, backgroundColor: isLocked ? "#f4f6f8" : "#fff0f0", border: isLocked ? "1px solid #eee" : "1px solid #fcc", color: isLocked ? "#ccc" : "#d82c0d", cursor: isLocked ? "not-allowed" : "pointer"}} title={isLocked ? "Verrouillé" : "Supprimer"}>
                   {isDeletingThis ? <Spinner color="#d82c0d" /> : "🗑"}
                 </button>
               </Form>
@@ -291,16 +343,16 @@ function EntryRow({ entry, index }: { entry: any; index: number }) {
 
 // --- FORMULAIRE NOUVELLE ENTRÉE ---
 function NewEntryForm() {
-  const [formData, setFormData] = React.useState({ identification: "", name: "", email: "", code: "", montant: "", type: "%" });
+  const [formData, setFormData] = useState({ identification: "", name: "", email: "", code: "", montant: "", type: "%", profession: "", adresse: "" });
   const submit = useSubmit();
   const [searchParams] = useSearchParams();
   const nav = useNavigation();
 
   const isCreating = nav.formData?.get("action") === "create_entry";
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (searchParams.get("success") === "entry_created") {
-      setFormData({ identification: "", name: "", email: "", code: "", montant: "", type: "%" });
+      setFormData({ identification: "", name: "", email: "", code: "", montant: "", type: "%", profession: "", adresse: "" });
     }
   }, [searchParams]);
 
@@ -318,6 +370,8 @@ function NewEntryForm() {
       <td style={styles.cell}><input disabled={isCreating} type="text" name="identification" placeholder="Ref *" required value={formData.identification} onChange={e => setFormData({...formData, identification: e.target.value})} style={styles.input} /></td>
       <td style={styles.cell}><input disabled={isCreating} type="text" name="name" placeholder="Prénom NOM *" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={styles.input} /></td>
       <td style={styles.cell}><input disabled={isCreating} type="email" name="email" placeholder="Email *" required value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}><input disabled={isCreating} type="text" name="profession" placeholder="Profession" value={formData.profession} onChange={e => setFormData({...formData, profession: e.target.value})} style={styles.input} /></td>
+      <td style={styles.cell}><input disabled={isCreating} type="text" name="adresse" placeholder="Adresse" value={formData.adresse} onChange={e => setFormData({...formData, adresse: e.target.value})} style={styles.input} /></td>
       
       <td style={{...styles.cellPromo, ...borderLeftSep}}><input disabled={isCreating} type="text" name="code" placeholder="Code *" required value={formData.code} onChange={e => setFormData({...formData, code: e.target.value})} style={{...styles.input, ...promoInputBg}} /></td>
       <td style={{...styles.cellPromo, width: "60px"}}><input disabled={isCreating} type="number" step="0.01" name="montant" placeholder="Val *" required value={formData.montant} onChange={e => setFormData({...formData, montant: e.target.value})} style={{...styles.input, ...promoInputBg}} /></td>
@@ -327,7 +381,7 @@ function NewEntryForm() {
         </select>
       </td>
       <td style={{...styles.cellPromo, width: "100px", ...borderLeftSep}}>
-        <button type="button" disabled={isCreating} onClick={handleAdd} style={{ padding: "8px 12px", backgroundColor: isCreating ? "#8bcbb6" : "#008060", color: "white", border: "none", borderRadius: "4px", cursor: isCreating ? "default" : "pointer", fontWeight: "bold", width: "100%", display: "flex", justifyContent: "center", alignItems: "center", gap: "5px" }}>
+        <button type="button" disabled={isCreating} onClick={handleAdd} style={{ padding: "8px 12px", backgroundColor: isCreating ? "#ccc" : "#008060", color: "white", border: "none", borderRadius: "4px", cursor: isCreating ? "not-allowed" : "pointer", fontWeight: "bold", width: "100%", display: "flex", justifyContent: "center", alignItems: "center", gap: "5px" }}>
           {isCreating ? <><Spinner /> ...</> : "Ajouter"}
         </button>
       </td>
@@ -335,9 +389,53 @@ function NewEntryForm() {
   );
 }
 
+// --- SOUS-COMPOSANT SETTINGS ---
+interface ConfigType {
+  threshold: number;
+  creditAmount: number;
+}
+
+function SettingsForm({ config, isLocked }: { config: ConfigType | null; isLocked: boolean }) {
+  return (
+    <>
+      <p style={{ margin: "0 0 15px 0", fontSize: "0.9rem", color: "#666" }}>
+        Modifiez ici les règles de calcul globales pour les crédits offerts aux Pros.
+      </p>
+
+      <Form method="post" style={{ display: "flex", gap: "20px", alignItems: "flex-end", flexWrap: "wrap", opacity: isLocked ? 0.6 : 1 }}>
+        <input type="hidden" name="action" value="update_config" />
+        <div style={{ flex: 1, minWidth: "200px" }}>
+          <label htmlFor="threshold" style={{ display: "block", fontSize: "0.85rem", color: "#666", marginBottom: "5px" }}>Seuil de Gains (CA généré)</label>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <input type="number" id="threshold" name="threshold" defaultValue={config?.threshold} step="0.01" disabled={isLocked} style={{ ...styles.input, flex: 1 }} />
+            <span style={{ fontWeight: "bold" }}>€</span>
+          </div>
+        </div>
+        <div style={{ flex: 1, minWidth: "200px" }}>
+          <label htmlFor="creditAmount" style={{ display: "block", fontSize: "0.85rem", color: "#666", marginBottom: "5px" }}>Montant du Crédit Offert</label>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <input type="number" id="creditAmount" name="creditAmount" defaultValue={config?.creditAmount} step="0.01" disabled={isLocked} style={{ ...styles.input, flex: 1 }} />
+            <span style={{ fontWeight: "bold" }}>€</span>
+          </div>
+        </div>
+        <button type="submit" disabled={isLocked} style={{ 
+          padding: "10px 20px", backgroundColor: isLocked ? "#ccc" : "#008060", color: "white", 
+          border: "none", borderRadius: "8px", cursor: isLocked ? "not-allowed" : "pointer", fontWeight: "600",
+          transition: "opacity 0.2s"
+        }}>
+          Enregistrer les réglages
+        </button>
+      </Form>
+      <p style={{ margin: "15px 0 0 0", fontSize: "0.85rem", color: "#888" }}>
+        Exemple : Le partenaire gagnera <strong>{config?.creditAmount}€</strong> tous les <strong>{config?.threshold}€</strong> de CA généré.
+      </p>
+    </>
+  );
+}
+
 // --- PAGE PRINCIPALE ---
 export default function Index() {
-  const { status, entries } = useLoaderData<typeof loader>();
+  const { status, entries, config } = useLoaderData<typeof loader>();
   const actionData = useActionData<typeof action>();
   const [searchParams, setSearchParams] = useSearchParams();
   const nav = useNavigation();
@@ -362,20 +460,24 @@ export default function Index() {
   else if (successType === "entry_deleted") successMessage = "Pro supprimé et nettoyé avec succès.";
   else if (successType === "structure_created") successMessage = "Application initialisée avec succès.";
   else if (successType === "structure_deleted") successMessage = "Tout a été effacé (Reset complet).";
+  else if (successType === "config_updated") successMessage = "Réglages de crédit mis à jour !";
+  else if (actionData?.success === "config_updated") successMessage = "Réglages de crédit mis à jour !";
 
-  const [showSuccess, setShowSuccess] = React.useState(!!successType);
+  const [showSuccess, setShowSuccess] = useState(!!successType || actionData?.success === "config_updated");
 
-  React.useEffect(() => {
-    setShowSuccess(!!successType);
-    if (successType) {
+  useEffect(() => {
+    setShowSuccess(!!successType || actionData?.success === "config_updated");
+    if (successType || actionData?.success === "config_updated") {
       const timer = setTimeout(() => {
-        searchParams.delete("success");
-        setSearchParams(searchParams, { replace: true });
+        if (successType) {
+          searchParams.delete("success");
+          setSearchParams(searchParams, { replace: true });
+        }
         setShowSuccess(false);
       }, 5000);
       return () => clearTimeout(timer);
     }
-  }, [successType, searchParams, setSearchParams]);
+  }, [successType, actionData?.success, searchParams, setSearchParams]);
 
   const containerMaxWidth = "1600px"; 
   const bannerStyle = { padding: "12px 20px", marginBottom: "20px", borderRadius: "8px", maxWidth: containerMaxWidth, margin: "0 auto 20px", textAlign: "center" as const, fontWeight: "600", boxShadow: "0 2px 5px rgba(0,0,0,0.1)" };
@@ -384,6 +486,22 @@ export default function Index() {
   const thPromoStyle = { ...thStyle, textAlign: "center" as const, backgroundColor: "#f1f8f5", color: "#008060", borderBottom: "2px solid #e1e3e5" };
   const thPromoBorder = { borderLeft: "2px solid #e1e3e5" };
   const thActionStyle = { ...thStyle, textAlign: "center" as const, borderLeft: "2px solid #eee" };
+
+  // --- GESTION DU VERROU GLOBAL ---
+  const [isLocked, setIsLocked] = useState(true);
+  const [showPass, setShowPass] = useState(false);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  const handleUnlock = () => {
+    if (password === "GestionPro") {
+      setIsLocked(false);
+      setShowPass(false);
+      setError("");
+    } else {
+      setError("Code incorrect");
+    }
+  };
 
   return (
     <div style={styles.wrapper}>
@@ -395,11 +513,46 @@ export default function Index() {
         }
       `}</style>
 
-      <h1 style={{ color: "#202223", marginBottom: "20px", textAlign: "center", fontSize: "1.8rem", fontWeight: "700" }}>
-        Gestion des Pros de Santé
-      </h1>
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: "20px", marginBottom: "20px", position: "relative" }}>
+        <h1 style={{ color: "#202223", margin: 0, fontSize: "1.8rem", fontWeight: "700" }}>
+          Gestion des Pros de Santé
+        </h1>
 
-      {/* MODIF : Affichage conditionnel de la Navigation et du Guide */}
+        {status.exists && (
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {isLocked && !showPass && (
+              <button type="button" onClick={() => setShowPass(true)} style={{ padding: "6px 12px", backgroundColor: "white", border: "1px solid #c9cccf", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem", fontWeight: "600", boxShadow: "0 1px 2px rgba(0,0,0,0.05)" }}>
+                🔒 Modifier
+              </button>
+            )}
+
+            {showPass && (
+              <div style={{ display: "flex", gap: "8px", alignItems: "center", backgroundColor: "white", padding: "4px 8px", borderRadius: "8px", border: "1px solid #c9cccf" }}>
+                <input 
+                  type="password" 
+                  autoFocus
+                  placeholder="Code d'accès" 
+                  value={password} 
+                  onChange={e => setPassword(e.target.value)} 
+                  onKeyDown={e => e.key === "Enter" && handleUnlock()}
+                  style={{ ...styles.input, width: "120px", padding: "4px 8px", border: "none" }} 
+                />
+                <button type="button" onClick={handleUnlock} style={{ padding: "4px 10px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", fontSize: "0.8rem", fontWeight: "600", cursor: "pointer" }}>
+                  Valider
+                </button>
+                {error && <span style={{ color: "#d82c0d", fontSize: "0.75rem", fontWeight: "bold" }}>{error}</span>}
+              </div>
+            )}
+
+            {!isLocked && (
+              <button type="button" onClick={() => setIsLocked(true)} style={{ padding: "6px 12px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "4px", cursor: "pointer", fontSize: "0.85rem", fontWeight: "600", display: "flex", alignItems: "center", gap: "5px" }}>
+                🔓 Mode édition activé (Clic pour verrouiller)
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
       {status.exists && (
         <>
           <div style={{ display: "flex", justifyContent: "center", gap: "15px", marginBottom: "20px", flexWrap: "wrap" }}>
@@ -409,27 +562,9 @@ export default function Index() {
             <Link to="/app/clients" className="nav-btn" style={styles.navButton}>
               <span>👥</span> Gestion Clients Pros →
             </Link>
-            <Link to="/app/tutoriel" className="nav-btn" style={styles.navButton}>
-              <span>📘</span> Tutoriel →
-            </Link>
             <Link to="/app/analytique" className="nav-btn" style={styles.navButton}>
               <span>📊</span> Analytique →
             </Link>
-          </div>
-
-          <div style={{ maxWidth: containerMaxWidth, margin: "0 auto" }}>
-            <details style={styles.infoDetails}>
-              <summary style={styles.infoSummary}>ℹ️ Guide d'utilisation (Cliquez pour dérouler)</summary>
-              <div style={{ padding: "0 20px 20px 20px", color: "#555", fontSize: "0.95rem", lineHeight: "1.5" }}>
-                <p style={{marginTop: 0}}><strong>Bienvenue sur le tableau de bord principal.</strong> Ici, vous pouvez :</p>
-                <ul style={{ paddingLeft: "20px", margin: "10px 0" }}>
-                    <li><strong>Ajout d'un partenaire :</strong> Création du code promo. Si l'email client existe, le tag "pro_sante" est ajouté. Sinon, le client est créé automatiquement avec le tag.</li>
-                    <li><strong>Modification :</strong> Synchronisation complète. L'email du client est mis à jour dans Shopify, ainsi que les valeurs du code promo.</li>
-                    <li><strong>Suppression :</strong> Le code promo est supprimé (et non désactivé) et le tag est retiré du client. Le client reste présent dans Shopify.</li>
-                </ul>
-                <p style={{marginBottom: 0}}><em>Note : La référence interne doit être unique pour faciliter votre gestion.</em></p>
-              </div>
-            </details>
           </div>
         </>
       )}
@@ -437,7 +572,33 @@ export default function Index() {
       {showSuccess && <div style={{ ...bannerStyle, backgroundColor: "#008060", color: "white" }}>✓ {successMessage}</div>}
       {actionData?.error && <div style={{ ...bannerStyle, backgroundColor: "#fff5f5", color: "#d82c0d", border: "1px solid #fcc" }}>⚠️ {actionData.error}</div>}
       
-      {/* MODIF : Contenu si Initialisé vs Non-Initialisé */}
+      {status.exists && (
+        <div style={{ maxWidth: containerMaxWidth, margin: "0 auto" }}>
+          
+          <details style={styles.infoDetails}>
+            <summary style={styles.infoSummary}>ℹ️ Guide d&apos;utilisation (Cliquez pour dérouler)</summary>
+            <div style={{ padding: "0 20px 20px 20px", color: "#555", fontSize: "0.95rem", lineHeight: "1.5" }}>
+              <p style={{marginTop: 0}}><strong>Bienvenue sur le tableau de bord principal.</strong> Ici, vous pouvez :</p>
+              <ul style={{ paddingLeft: "20px", margin: "10px 0" }}>
+                  <li><strong>Ajout d&apos;un partenaire :</strong> Création du code promo. Synchronisation du nom, email, <strong>profession et adresse postale</strong> vers les métafields du client Shopify.</li>
+                  <li><strong>Modification :</strong> Synchronisation complète en temps réel. Toutes les infos (y compris profession/adresse) sont mises à jour dans Shopify.</li>
+                  <li><strong>Réglages Crédits :</strong> Définissez votre propre seuil de CA et le montant du crédit offert. Le système s&apos;adapte automatiquement.</li>
+                  <li><strong>Suppression :</strong> Le code promo est supprimé et le tag est retiré du client. Les fiches clients sont conservées.</li>
+              </ul>
+              <p style={{marginBottom: 0}}><em>Note : La référence interne doit être unique pour faciliter votre gestion.</em></p>
+            </div>
+          </details>
+
+          <details style={{ ...styles.infoDetails, borderLeft: "4px solid #9c6ade" }}>
+            <summary style={styles.infoSummary}>⚙️ Réglages des Crédits Gains (Cliquez pour dérouler)</summary>
+            <div style={{ padding: "0 20px 20px 20px" }}>
+              <SettingsForm config={config} isLocked={isLocked} />
+            </div>
+          </details>
+
+        </div>
+      )}
+      
       {status.exists ? (
         <div style={{ maxWidth: containerMaxWidth, margin: "0 auto" }}>
           
@@ -456,6 +617,8 @@ export default function Index() {
                     <th style={thStyle}>Ref Interne</th>
                     <th style={thStyle}>Prénom NOM</th>
                     <th style={thStyle}>Email</th>
+                    <th style={thStyle}>Profession</th>
+                    <th style={thStyle}>Adresse</th>
                     
                     <th style={{...thPromoStyle, ...thPromoBorder}}>Code Promo</th>
                     <th style={{...thPromoStyle, width: "60px"}}>Montant</th>
@@ -466,7 +629,7 @@ export default function Index() {
                 </thead>
                 <tbody>
                   <NewEntryForm />
-                  {currentEntries.map((entry, index) => <EntryRow key={entry.id} entry={entry} index={index} />)}
+                  {currentEntries.map((entry, index) => <EntryRow key={entry.id} entry={entry} index={index} isLocked={isLocked} />)}
                 </tbody>
               </table>
             </div>
@@ -495,15 +658,18 @@ export default function Index() {
 
           </div>
 
-          <div style={{ marginTop: "60px", padding: "20px", borderTop: "1px solid #eee", textAlign: "center" }}>
+          <div style={{ marginTop: "60px", padding: "20px", borderTop: "1px solid #eee", textAlign: "center", opacity: isLocked ? 0.5 : 1 }}>
              <details>
                <summary style={{ cursor: "pointer", color: "#666", fontSize: "0.9rem" }}>Afficher les options développeur (Zone Danger)</summary>
                <div style={{ marginTop: "15px", padding: "15px", border: "1px dashed #d82c0d", borderRadius: "8px", backgroundColor: "#fff5f5", display: "inline-block" }}>
-                 <p style={{ color: "#d82c0d", fontWeight: "bold", fontSize: "0.9rem", margin: "0 0 10px 0" }}>⚠️ ATTENTION : SUPPRESSION TOTALE DE L'APPLICATION</p>
-                 <Form method="post" onSubmit={(e) => !confirm("ATTENTION ULTIME : \n\nVous allez supprimer :\n1. Tous les Pro de santé enregistrés\n2. Tous les codes promo liés\n3. Retirer le tag de tous les clients\n4. Détruire la définition du Métaobjet\n\nÊtes-vous sûr ?") && e.preventDefault()}>
+                 <p style={{ color: "#d82c0d", fontWeight: "bold", fontSize: "0.9rem", margin: "0 0 10px 0" }}>⚠️ ATTENTION : SUPPRESSION TOTALE DE L&apos;APPLICATION</p>
+                 <Form method="post" onSubmit={(e) => {
+                   if (isLocked) { e.preventDefault(); return; }
+                   if (!confirm("ATTENTION ULTIME : \n\nVous allez supprimer :\n1. Tous les Pro de santé enregistrés\n2. Tous les codes promo liés\n3. Retirer le tag de tous les clients\n4. Détruire la définition du Métaobjet\n\nÊtes-vous sûr ?")) e.preventDefault();
+                 }}>
                    <input type="hidden" name="action" value="destroy_structure" />
-                   <button type="submit" disabled={isDestroying} style={{ backgroundColor: "#d82c0d", color: "white", border: "none", padding: "8px 16px", borderRadius: "4px", cursor: isDestroying ? "default" : "pointer", fontWeight: "bold", fontSize: "0.85rem", opacity: isDestroying ? 0.7 : 1, display: "flex", alignItems: "center", gap: "10px", margin: "0 auto" }}>
-                     {isDestroying ? <><Spinner /> Suppression en cours...</> : "☢️ TOUT SUPPRIMER & RÉINITIALISER"}
+                   <button type="submit" disabled={isDestroying || isLocked} style={{ backgroundColor: isLocked ? "#ccc" : "#d82c0d", color: "white", border: "none", padding: "8px 16px", borderRadius: "4px", cursor: (isDestroying || isLocked) ? "not-allowed" : "pointer", fontWeight: "bold", fontSize: "0.85rem", opacity: (isDestroying || isLocked) ? 0.7 : 1, display: "flex", alignItems: "center", gap: "10px", margin: "0 auto" }}>
+                     {isDestroying ? <><Spinner /> Suppression en cours...</> : (isLocked ? "🔒 Section Verrouillée" : "☢️ TOUT SUPPRIMER & RÉINITIALISER")}
                    </button>
                  </Form>
                </div>
@@ -516,11 +682,11 @@ export default function Index() {
         <div style={{ textAlign: "center", marginTop: "100px" }}>
           <div style={{ backgroundColor: "white", padding: "40px", borderRadius: "16px", boxShadow: "0 4px 20px rgba(0,0,0,0.1)", maxWidth: "500px", margin: "0 auto" }}>
              <h2 style={{ fontSize: "1.5rem", marginBottom: "15px" }}>Bienvenue !</h2>
-             <p style={{ color: "#666", marginBottom: "30px" }}>L'application n'est pas encore initialisée. Cliquez ci-dessous pour créer la structure de base dans Shopify.</p>
+             <p style={{ color: "#666", marginBottom: "30px" }}>L&apos;application n&apos;est pas encore initialisée. Cliquez ci-dessous pour créer la structure de base dans Shopify.</p>
              <Form method="post">
                 <input type="hidden" name="action" value="create_structure" />
                 <button type="submit" disabled={isInitializing} style={{ padding: "12px 24px", backgroundColor: "#008060", color: "white", border: "none", borderRadius: "8px", cursor: "pointer", fontSize: "1rem", fontWeight: "600", display: "flex", alignItems: "center", gap: "10px", margin: "0 auto", opacity: isInitializing ? 0.7 : 1 }}>
-                   {isInitializing ? <><Spinner /> Initialisation...</> : "🚀 Initialiser l'application"}
+                   {isInitializing ? <><Spinner /> Initialisation...</> : "🚀 Initialiser l&apos;application"}
                 </button>
              </Form>
           </div>
