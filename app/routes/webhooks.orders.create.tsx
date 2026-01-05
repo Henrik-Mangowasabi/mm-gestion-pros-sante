@@ -4,9 +4,26 @@ import { authenticate } from "../shopify.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
-    const { admin, payload } = await authenticate.webhook(request);
-    if (!admin) {
-      console.error("❌ Webhook: admin non disponible");
+    const { admin, payload, shop, session, topic } = await authenticate.webhook(request);
+    
+    console.log(`📥 Webhook reçu - Shop: ${shop}, Topic: ${topic}, Session: ${session ? "Oui" : "Non"}, Admin: ${admin ? "Oui" : "Non"}`);
+    
+    // Si admin n'est pas disponible, essayer de le récupérer depuis la session
+    let adminContext = admin;
+    if (!adminContext && session) {
+      console.log(`🔄 Tentative de récupération de l'admin depuis la session...`);
+      try {
+        const { admin: adminFromSession } = await authenticate.admin(request);
+        adminContext = adminFromSession;
+        console.log(`✅ Admin récupéré depuis la session`);
+      } catch (error) {
+        console.error(`❌ Erreur lors de la récupération de l'admin:`, error);
+      }
+    }
+    
+    if (!adminContext) {
+      console.error("❌ Webhook: admin non disponible - Shop:", shop, "Session:", session?.id);
+      // Retourner 200 pour éviter que Shopify réessaie indéfiniment
       return new Response(JSON.stringify({ error: "Admin non disponible" }), { 
         status: 200, 
         headers: { "Content-Type": "application/json" } 
@@ -85,7 +102,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           }
         `;
         
-        const discountResponse = await admin.graphql(discountQuery, { 
+        const discountResponse = await adminContext.graphql(discountQuery, { 
           variables: { id: discountId } 
         });
         const discountData = await discountResponse.json() as any;
@@ -177,7 +194,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     `;
 
     try {
-      const response = await admin.graphql(queryAllMetaobjects);
+      const response = await adminContext.graphql(queryAllMetaobjects);
       const data = await response.json() as any;
       
       if (data.errors) {
@@ -264,7 +281,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               }
             }
           `;
-          const rAccount = await admin.graphql(queryAccount, { variables: { id: customerIdValue }});
+          const rAccount = await adminContext.graphql(queryAccount, { variables: { id: customerIdValue }});
           const dAccount = await rAccount.json();
           const accountId = dAccount.data?.customer?.storeCreditAccounts?.edges?.[0]?.node?.id;
 
@@ -279,7 +296,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               }
             `;
             
-            const rCredit = await admin.graphql(mutationCredit, { 
+            const rCredit = await adminContext.graphql(mutationCredit, { 
               variables: { 
                 id: accountId, 
                 amount: { amount: amountToDeposit, currencyCode: "EUR" } 
@@ -303,7 +320,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // 4. Mettre à jour notre cache (pour ne pas le re-payer la prochaine fois)
       // On met à jour "cache_credit_earned" avec le nouveau total théorique
       console.log(`🔄 Mise à jour du metaobject ${metaobjectNode.id}...`);
-      const updateResponse = await admin.graphql(`#graphql
+      const updateResponse = await adminContext.graphql(`#graphql
         mutation metaobjectUpdate($id: ID!, $metaobject: MetaobjectUpdateInput!) {
           metaobjectUpdate(id: $id, metaobject: $metaobject) { 
             metaobject { id }
