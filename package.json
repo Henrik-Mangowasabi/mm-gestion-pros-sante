@@ -1,5 +1,5 @@
 {
-  "name": "app-mm-gestion-pros",
+  "name": "basilic-app-gestion-pros",
   "private": true,
   "scripts": {
     "build": "react-router build",
